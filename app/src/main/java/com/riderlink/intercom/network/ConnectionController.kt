@@ -1,6 +1,7 @@
 package com.riderlink.intercom.network
 
 import android.content.Context
+import android.util.Log
 import com.riderlink.intercom.protocol.PacketHeader
 import com.riderlink.intercom.protocol.QrPayload
 import com.riderlink.intercom.protocol.SenderId
@@ -99,13 +100,15 @@ class ConnectionController(
         wifiClient.connect(
             ssid = qrPayload.ssid,
             passphrase = qrPayload.passphrase,
-            onConnected = { network ->
+            onConnected = { connected ->
+                val targetIp = connected.gatewayIp ?: qrPayload.hostIp
+                Log.i("RiderLink", "joinViaQr connected: qrIp=${qrPayload.hostIp}, gatewayIp=${connected.gatewayIp}, target=$targetIp:${qrPayload.udpPort}")
                 startClientUdp(
-                    hostIp = qrPayload.hostIp,
+                    hostIp = targetIp,
                     port = qrPayload.udpPort,
                     sessionToken = qrPayload.sessionToken,
                     mode = TransportMode.LOCAL_ONLY_HOTSPOT,
-                    boundNetwork = network
+                    boundNetwork = connected.network
                 )
             },
             onError = { err ->

@@ -80,6 +80,7 @@ class UdpAudioTransport(
         txSeq.set(0L)
 
         heartbeatMonitor.start(initialPeer?.let { "${it.address.hostAddress}:${it.port}" })
+        logInfo("UDP started: localPort=${sock.localPort}, peer=$initialPeer, boundNet=${boundNetwork != null}")
 
         rxThread = Thread({ runRxLoop(sock) }, "RiderLink-UDP-RX").apply {
             priority = Thread.MAX_PRIORITY
@@ -178,6 +179,7 @@ class UdpAudioTransport(
                 val senderAddr = packet.socketAddress as? InetSocketAddress
                 if (senderAddr != null && peerAddress != senderAddr) {
                     peerAddress = senderAddr
+                    logInfo("UDP peer learned: ${senderAddr.address.hostAddress}:${senderAddr.port}")
                     heartbeatMonitor.setPeerAddress("${senderAddr.address.hostAddress}:${senderAddr.port}")
                 }
 
@@ -281,6 +283,10 @@ class UdpAudioTransport(
         } catch (_: IOException) {
             false
         }
+    }
+
+    private fun logInfo(msg: String) {
+        runCatching { android.util.Log.i("RiderLink", msg) }
     }
 
     companion object {

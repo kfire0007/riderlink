@@ -6,6 +6,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -36,6 +37,8 @@ class LocalHotspotHost(
         onError: (String) -> Unit
     ) {
         stop()
+        val preExistingIps = listAllLocalIpv4s()
+        Log.i(TAG, "Starting LocalOnlyHotspot (pre-existing IPs: $preExistingIps)")
         try {
             wifiManager.startLocalOnlyHotspot(
                 object : WifiManager.LocalOnlyHotspotCallback() {
@@ -48,11 +51,12 @@ class LocalHotspotHost(
                             return
                         }
                         scope.launch(Dispatchers.IO) {
-                            val hostIp = resolveHotspotIpWithRetries()
+                            val hostIp = resolveHotspotIpWithRetries(preExistingIps)
                             if (hostIp == null) {
                                 stop()
                                 onError("Could not resolve local hotspot IP address")
                             } else {
+                                Log.i(TAG, "LocalOnlyHotspot ready: ssid=$ssid, hostIp=$hostIp")
                                 onStarted(HotspotCredentials(ssid, pass, hostIp))
                             }
                         }
@@ -70,6 +74,7 @@ class LocalHotspotHost(
                             ERROR_INCOMPATIBLE_MODE -> "Turn off existing Wi-Fi/Hotspot before starting"
                             else -> "Hotspot failed (code $reason)"
                         }
+                        Log.w(TAG, "LocalOnlyHotspot failed: $detail")
                         onError(detail)
                     }
                 },
@@ -108,33 +113,55 @@ class LocalHotspotHost(
         }
     }
 
-    private suspend fun resolveHotspotIpWithRetries(): String? {
-        repeat(10) {
-            val ip = findSoftApIpv4()
+    private suspend fun resolveHotspotIpWithRetries(preExistingIps: Set<String>): String? {
+        repeat(15) {
+            val ip = findSoftApIpv4(preExistingIps)
             if (ip != null) return ip
             delay(200L)
+        }
+        val fallback = LanFallbackConnector.findLocalIpv4()
+        Log.w(TAG, "Falling back to LAN IP after SoftAP poll: $fallback")
+        return fallback
+    }
+
+    private fun findSoftApIpv4(preExistingIps: Set<String>): String? {
+        val candidates = listAllInterfaceAddresses()
+        // 1. Prefer any newly created interface IP not present before startLocalOnlyHotspot()
+        val newIps = candidates.filter { it.second !in preExistingIps }
+        newIps.firstOrNull { it.second.endsWith(".1") }?.let { return it.second }
+        newIps.firstOrNull()?.let { return it.second }
+
+        // 2. Otherwise prefer typical SoftAP interface prefixes (ap*, swlan*, softap*, wlan1/2*)
+        val apPrefixes = listOf("ap", "swlan", "softap", "wlan1", "wlan2")
+        for (prefix in apPrefixes) {
+            candidates.firstOrNull { it.first.startsWith(prefix) }?.let { return it.second }
         }
         return null
     }
 
-    private fun findSoftApIpv4(): String? {
+    private fun listAllLocalIpv4s(): Set<String> =
+        listAllInterfaceAddresses().map { it.second }.toSet()
+
+    private fun listAllInterfaceAddresses(): List<Pair<String, String>> {
         val interfaces = try {
             NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
         } catch (_: Exception) {
-            return null
+            return emptyList()
         }
-
-        val preferred = listOf("ap", "swlan", "softap", "wlan")
-        for (prefix in preferred) {
-            for (iface in interfaces) {
-                if (!iface.isUp || iface.isLoopback) continue
-                if (!iface.name.lowercase().startsWith(prefix)) continue
-                val addr = iface.inetAddresses.toList()
-                    .filterIsInstance<Inet4Address>()
-                    .firstOrNull { !it.isLoopbackAddress && it.isSiteLocalAddress }
-                if (addr != null) return addr.hostAddress
+        val result = mutableListOf<Pair<String, String>>()
+        for (iface in interfaces) {
+            if (!iface.isUp || iface.isLoopback) continue
+            val name = iface.name.lowercase()
+            for (addr in iface.inetAddresses.toList().filterIsInstance<Inet4Address>()) {
+                if (!addr.isLoopbackAddress && addr.isSiteLocalAddress) {
+                    addr.hostAddress?.let { result.add(name to it) }
+                }
             }
         }
-        return LanFallbackConnector.findLocalIpv4()
+        return result
+    }
+
+    companion object {
+        private const val TAG = "RiderLink"
     }
 }
