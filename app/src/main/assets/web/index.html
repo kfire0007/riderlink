@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>RiderLink</title>
+<style>
+  :root {
+    --black: #000000;
+    --asphalt: #141517;
+    --steel: #272A2E;
+    --amber: #F59E0B;
+    --emerald: #22C55E;
+    --crimson: #EF4444;
+    --white: #F8FAFC;
+    --slate: #94A3B8;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: var(--black); color: var(--white);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+    overscroll-behavior: none;
+  }
+  .wrap {
+    min-height: 100%; display: flex; flex-direction: column;
+    padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+    max-width: 480px; margin: 0 auto;
+  }
+  .brand { color: var(--amber); font-size: 15px; font-weight: 600; }
+  h1 { margin: 6px 0 4px; font-size: 30px; font-weight: 700; }
+  .sub { color: var(--slate); font-size: 14px; margin: 0 0 24px; }
+  .card {
+    background: var(--asphalt); border: 1.5px solid var(--steel);
+    border-radius: 14px; padding: 16px; margin-bottom: 14px;
+  }
+  .notice {
+    border-color: var(--amber); background: #1A1208; color: var(--amber);
+    font-size: 13px; line-height: 1.45;
+  }
+  label { display: block; color: var(--slate); font-size: 13px; margin-bottom: 8px; }
+  input {
+    width: 100%; height: 54px; border-radius: 12px; border: 1.5px solid var(--steel);
+    background: var(--black); color: var(--white); font-size: 22px; font-weight: 700;
+    padding: 0 16px; font-variant-numeric: tabular-nums; text-align: center;
+  }
+  .btn {
+    width: 100%; height: 64px; border-radius: 14px; border: none;
+    font-size: 18px; font-weight: 700; cursor: pointer;
+  }
+  .btn-amber { background: var(--amber); color: var(--black); }
+  .btn-steel { background: var(--asphalt); color: var(--white); border: 1.5px solid var(--steel); }
+  .btn-crimson { background: var(--crimson); color: var(--white); }
+
+  .pills { display: flex; gap: 10px; margin-bottom: 14px; }
+  .pill {
+    flex: 1; background: var(--asphalt); border: 1px solid var(--steel);
+    border-radius: 12px; padding: 10px 12px;
+  }
+  .pill-k { color: var(--slate); font-size: 11px; }
+  .pill-v { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+  .center-wrap { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px 0; }
+  .ring {
+    width: 216px; height: 216px; border-radius: 50%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 16px; border: 4px solid var(--emerald); background: #0C1F14;
+    touch-action: none;
+  }
+  .ring.muted { border-color: var(--crimson); background: #230C0E; }
+  .ring.ptt-idle { border-color: var(--steel); background: var(--asphalt); }
+  .ring.ptt-active { border-color: var(--white); background: var(--amber); color: var(--black); }
+  .ring-title { font-size: 25px; font-weight: 800; }
+  .ring-sub { font-size: 13px; color: var(--slate); margin-top: 6px; }
+  .ring.ptt-active .ring-sub { color: #1F1500; }
+
+  .seg { display: flex; gap: 8px; margin-bottom: 12px; }
+  .seg button {
+    flex: 1; height: 52px; border-radius: 12px; border: 1.5px solid var(--steel);
+    background: var(--asphalt); color: var(--slate); font-size: 15px; font-weight: 600;
+  }
+  .seg button.active { border-color: var(--amber); color: var(--white); }
+  .row { display: flex; gap: 10px; }
+  .row button { flex: 1; height: 54px; font-size: 15px; }
+  .hidden { display: none !important; }
+
+  #pocketOverlay {
+    position: fixed; inset: 0; background: #000000; z-index: 99;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #2A2A2A; font-size: 14px; text-align: center; padding: 24px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="joinView">
+    <div class="brand">RiderLink</div>
+    <h1>Join the ride</h1>
+    <p class="sub">Offline iPhone voice link</p>
+    <div class="card notice">
+      Keep Safari open during the ride. Tap <strong>Pocket mode</strong> after joining to dim the screen while keeping your mic active.
+    </div>
+    <div class="card">
+      <label for="tokenInput">4-digit session code</label>
+      <input id="tokenInput" type="tel" maxlength="4" inputmode="numeric" placeholder="0000">
+    </div>
+    <button id="btnJoin" class="btn btn-amber">Join voice</button>
+    <p id="joinErr" class="sub" style="color:var(--crimson);margin-top:12px;"></p>
+  </div>
+
+  <div id="rideView" class="hidden" style="display:flex;flex-direction:column;flex:1;">
+    <div class="pills">
+      <div class="pill">
+        <div class="pill-k">Link</div>
+        <div id="pillLink" class="pill-v" style="color:var(--emerald);">Connecting</div>
+      </div>
+      <div class="pill">
+        <div class="pill-k">Mode</div>
+        <div id="pillMode" class="pill-v">Hands-free</div>
+      </div>
+    </div>
+
+    <div class="center-wrap">
+      <div id="ringBtn" class="ring">
+        <div id="ringTitle" class="ring-title">Mic live</div>
+        <div id="ringSub" class="ring-sub">Tap to mute</div>
+      </div>
+    </div>
+
+    <div class="seg">
+      <button id="btnHf" class="active">Hands-free</button>
+      <button id="btnPtt">Push to talk</button>
+    </div>
+
+    <div class="row">
+      <button id="btnPocket" class="btn btn-steel">Pocket mode</button>
+      <button id="btnEnd" class="btn btn-crimson">End ride</button>
+    </div>
+  </div>
+</div>
+
+<div id="pocketOverlay" class="hidden">
+  <div>Pocket mode active</div>
+  <div style="margin-top:8px;font-size:12px;">Double-tap screen to wake</div>
+</div>
+
+<script>
+(() => {
+  const TARGET_RATE = 16000;
+  const FRAME_SAMPLES = 320;
+  const joinView = document.getElementById('joinView');
+  const rideView = document.getElementById('rideView');
+  const tokenInput = document.getElementById('tokenInput');
+  const joinErr = document.getElementById('joinErr');
+  const pillLink = document.getElementById('pillLink');
+  const pillMode = document.getElementById('pillMode');
+  const ringBtn = document.getElementById('ringBtn');
+  const ringTitle = document.getElementById('ringTitle');
+  const ringSub = document.getElementById('ringSub');
+  const btnHf = document.getElementById('btnHf');
+  const btnPtt = document.getElementById('btnPtt');
+  const pocketOverlay = document.getElementById('pocketOverlay');
+
+  const params = new URLSearchParams(location.search);
+  if (params.get('token')) tokenInput.value = params.get('token').slice(0, 4);
+
+  let ws = null;
+  let audioCtx = null;
+  let micStream = null;
+  let workletNode = null;
+  let scriptNode = null;
+  let wakeLock = null;
+  let isClosing = false;
+  let mode = 'hf'; // 'hf' | 'ptt'
+  let isMuted = false;
+  let pttHeld = false;
+  let nextPlayTime = 0;
+  let hbTimer = null;
+  let lastPocketTap = 0;
+
+  // Resampling state
+  let sampleQueue = [];
+
+  function shouldTransmit() {
+    return mode === 'hf' ? !isMuted : pttHeld;
+  }
+
+  function renderRing() {
+    ringBtn.className = 'ring';
+    if (mode === 'hf') {
+      pillMode.textContent = 'Hands-free';
+      if (isMuted) {
+        ringBtn.classList.add('muted');
+        ringTitle.textContent = 'Mic muted';
+        ringSub.textContent = 'Tap to unmute';
+      } else {
+        ringTitle.textContent = 'Mic live';
+        ringSub.textContent = 'Tap to mute';
+      }
+    } else {
+      pillMode.textContent = 'Push to talk';
+      if (pttHeld) {
+        ringBtn.classList.add('ptt-active');
+        ringTitle.textContent = 'Transmitting';
+        ringSub.textContent = 'Release to stop';
+      } else {
+        ringBtn.classList.add('ptt-idle');
+        ringTitle.textContent = 'Hold to talk';
+        ringSub.textContent = 'Press and hold';
+      }
+    }
+  }
+
+  function sendText(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg);
+  }
+
+  function connectWs(token) {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      pillLink.textContent = 'Connected';
+      pillLink.style.color = 'var(--emerald)';
+      sendText('ping:' + Date.now());
+      clearInterval(hbTimer);
+      hbTimer = setInterval(() => sendText('ping:' + Date.now()), 1000);
+    };
+
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === 'string') {
+        if (ev.data.startsWith('pong:')) {
+          const sent = parseInt(ev.data.slice(5), 10);
+          if (!isNaN(sent)) {
+            pillLink.textContent = 'Connected ' + Math.max(0, Date.now() - sent) + ' ms';
+            pillLink.style.color = 'var(--emerald)';
+          }
+        } else if (ev.data.startsWith('ping:')) {
+          sendText('pong:' + ev.data.slice(5));
+        }
+        return;
+      }
+      playPcmFrame(ev.data);
+    };
+
+    ws.onclose = () => {
+      clearInterval(hbTimer);
+      if (isClosing) return;
+      pillLink.textContent = 'Reconnecting';
+      pillLink.style.color = 'var(--amber)';
+      setTimeout(() => { if (!isClosing) connectWs(token); }, 1500);
+    };
+  }
+
+  function playPcmFrame(arrayBuf) {
+    if (!audioCtx || arrayBuf.byteLength < 640) return;
+    const view = new DataView(arrayBuf);
+    const audioBuf = audioCtx.createBuffer(1, FRAME_SAMPLES, TARGET_RATE);
+    const ch = audioBuf.getChannelData(0);
+    for (let i = 0; i < FRAME_SAMPLES; i++) {
+      ch[i] = view.getInt16(i * 2, true) / 32768.0;
+    }
+    const now = audioCtx.currentTime;
+    if (nextPlayTime < now || nextPlayTime > now + 0.16) {
+      nextPlayTime = now + 0.05;
+    }
+    const src = audioCtx.createBufferSource();
+    src.buffer = audioBuf;
+    src.connect(audioCtx.destination);
+    src.start(nextPlayTime);
+    nextPlayTime += 0.02;
+  }
+
+  function pushMicFloat32(input, inRate) {
+    if (!shouldTransmit() || !ws || ws.readyState !== WebSocket.OPEN) {
+      sampleQueue.length = 0;
+      return;
+    }
+    const ratio = inRate / TARGET_RATE;
+    for (let pos = 0; pos < input.length; pos += ratio) {
+      const idx = Math.floor(pos);
+      if (idx < input.length) sampleQueue.push(input[idx]);
+    }
+    while (sampleQueue.length >= FRAME_SAMPLES) {
+      const buf = new ArrayBuffer(FRAME_SAMPLES * 2);
+      const view = new DataView(buf);
+      for (let i = 0; i < FRAME_SAMPLES; i++) {
+        const s = Math.max(-1, Math.min(1, sampleQueue[i]));
+        view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      }
+      sampleQueue.splice(0, FRAME_SAMPLES);
+      ws.send(buf);
+    }
+  }
+
+  async function startAudio() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC({ latencyHint: 'interactive' });
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+    });
+    const source = audioCtx.createMediaStreamSource(micStream);
+    const inRate = audioCtx.sampleRate;
+
+    try {
+      const workletCode = `class P extends AudioWorkletProcessor {
+        process(inputs) {
+          const ch = inputs[0] && inputs[0][0];
+          if (ch) this.port.postMessage(ch);
+          return true;
+        }
+      } registerProcessor('rl-cap', P);`;
+      const blobUrl = URL.createObjectURL(new Blob([workletCode], { type: 'application/javascript' }));
+      await audioCtx.audioWorklet.addModule(blobUrl);
+      workletNode = new AudioWorkletNode(audioCtx, 'rl-cap');
+      workletNode.port.onmessage = (e) => pushMicFloat32(e.data, inRate);
+      source.connect(workletNode);
+      workletNode.connect(audioCtx.destination); // silent output to keep worklet alive on iOS
+    } catch (_) {
+      scriptNode = audioCtx.createScriptProcessor(1024, 1, 1);
+      scriptNode.onaudioprocess = (e) => pushMicFloat32(e.inputBuffer.getChannelData(0), inRate);
+      source.connect(scriptNode);
+      scriptNode.connect(audioCtx.destination);
+    }
+  }
+
+  document.getElementById('btnJoin').onclick = async () => {
+    const token = tokenInput.value.trim();
+    if (!/^\d{4}$/.test(token)) {
+      joinErr.textContent = 'Enter the 4-digit code shown on the rider\'s phone.';
+      return;
+    }
+    joinErr.textContent = '';
+    try {
+      await startAudio();
+      isClosing = false;
+      joinView.classList.add('hidden');
+      rideView.classList.remove('hidden');
+      renderRing();
+      connectWs(token);
+    } catch (err) {
+      joinErr.textContent = 'Microphone permission is required: ' + (err.message || err);
+    }
+  };
+
+  ringBtn.addEventListener('click', () => {
+    if (mode !== 'hf') return;
+    isMuted = !isMuted;
+    sendText(isMuted ? 'ctrl:muted' : 'ctrl:unmuted');
+    renderRing();
+  });
+
+  function setPtt(active) {
+    if (mode !== 'ptt' || pttHeld === active) return;
+    pttHeld = active;
+    renderRing();
+  }
+  ringBtn.addEventListener('pointerdown', (e) => { if (mode === 'ptt') { e.preventDefault(); setPtt(true); } });
+  ringBtn.addEventListener('pointerup', () => setPtt(false));
+  ringBtn.addEventListener('pointercancel', () => setPtt(false));
+
+  btnHf.onclick = () => {
+    mode = 'hf'; pttHeld = false;
+    btnHf.classList.add('active'); btnPtt.classList.remove('active');
+    renderRing();
+  };
+  btnPtt.onclick = () => {
+    mode = 'ptt'; pttHeld = false;
+    btnPtt.classList.add('active'); btnHf.classList.remove('active');
+    renderRing();
+  };
+
+  document.getElementById('btnPocket').onclick = async () => {
+    pocketOverlay.classList.remove('hidden');
+    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (_) {}
+  };
+  pocketOverlay.addEventListener('touchend', () => {
+    const now = Date.now();
+    if (now - lastPocketTap < 350) {
+      pocketOverlay.classList.add('hidden');
+      try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (_) {}
+    }
+    lastPocketTap = now;
+  });
+
+  document.getElementById('btnEnd').onclick = () => {
+    isClosing = true;
+    clearInterval(hbTimer);
+    sendText('ctrl:goodbye');
+    try { if (ws) ws.close(); } catch (_) {}
+    try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+    try { if (audioCtx) audioCtx.close(); } catch (_) {}
+    try { if (wakeLock) wakeLock.release(); } catch (_) {}
+    rideView.classList.add('hidden');
+    joinView.classList.remove('hidden');
+  };
+})();
+</script>
+</body>
+</html>

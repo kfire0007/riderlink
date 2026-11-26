@@ -1,0 +1,60 @@
+package com.riderlink.intercom.protocol
+
+/**
+ * Fixed 16-byte big-endian UDP packet header layout for RiderLink.
+ *
+ * Byte offsets:
+ *  0..1  magic (0x524C = "RL")
+ *  2     version (1)
+ *  3     packetType (AUDIO, PING, PONG, CONTROL)
+ *  4     codecId (PCM16_16K, OPUS_RESERVED)
+ *  5     senderId (0 = Host/Rider, 1 = OBR, 2..N = Phase 2 peers)
+ *  6..7  sessionToken (uint16)
+ *  8..11 sequenceNumber (uint32)
+ * 12..15 timestampMs (uint32)
+ */
+object PacketType {
+    const val AUDIO: Byte = 0x01
+    const val PING: Byte = 0x02
+    const val PONG: Byte = 0x03
+    const val CONTROL: Byte = 0x04
+
+    fun isValid(value: Byte): Boolean =
+        value == AUDIO || value == PING || value == PONG || value == CONTROL
+}
+
+object ControlCode {
+    const val PEER_MUTED: Byte = 0x01
+    const val PEER_UNMUTED: Byte = 0x02
+    const val PEER_ON_CALL: Byte = 0x03
+    const val PEER_CALL_ENDED: Byte = 0x04
+    const val GOODBYE: Byte = 0x05
+}
+
+object CodecId {
+    const val PCM16_16K: Byte = 0x01
+    const val OPUS_RESERVED: Byte = 0x02
+}
+
+object SenderId {
+    const val HOST_RIDER: Byte = 0x00
+    const val OBR: Byte = 0x01
+}
+
+class PacketHeader(
+    var version: Byte = VERSION,
+    var packetType: Byte = PacketType.AUDIO,
+    var codecId: Byte = CodecId.PCM16_16K,
+    var senderId: Byte = SenderId.HOST_RIDER,
+    var sessionToken: Int = 0,
+    var sequenceNumber: Long = 0L,
+    var timestampMs: Long = 0L
+) {
+    companion object {
+        const val MAGIC: Int = 0x524C
+        const val VERSION: Byte = 1
+        const val HEADER_SIZE: Int = 16
+        const val MAX_AUDIO_PAYLOAD_SIZE: Int = 640
+        const val MAX_DATAGRAM_SIZE: Int = HEADER_SIZE + MAX_AUDIO_PAYLOAD_SIZE
+    }
+}

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RiderLink</string>
+    <string name="home_question">Who has the bike?</string>
+    <string name="home_subtitle">Offline voice over local Wi-Fi</string>
+    <string name="role_host_title">I\'m riding</string>
+    <string name="role_host_desc">Create link and show QR</string>
+    <string name="role_join_title">I\'m on the back</string>
+    <string name="role_join_desc">Scan rider\'s QR to join</string>
+    <string name="battery_ready">Background battery: Ready</string>
+    <string name="battery_setup_needed">Background battery: Setup needed</string>
+    <string name="battery_dialog_title">Keep alive with screen off</string>
+    <string name="battery_allow_unrestricted">Allow unrestricted</string>
+    <string name="battery_open_app_info">Open app info</string>
+    <string name="close_label">Close</string>
+
+    <string name="pair_back">Back</string>
+    <string name="pair_host_title">Create ride link</string>
+    <string name="pair_join_title">Join ride link</string>
+    <string name="tab_qr_link">QR link</string>
+    <string name="tab_iphone_obr">iPhone OBR</string>
+    <string name="tab_manual_lan">Manual Wi-Fi</string>
+    <string name="iphone_step_wifi">1. Join Wi-Fi</string>
+    <string name="iphone_step_safari">2. Open Safari</string>
+    <string name="iphone_hint_wifi">Point the iPhone Camera here and tap Join Network.</string>
+    <string name="iphone_hint_safari">Scan with iPhone Camera to open Safari, tap Show Details then visit this website, then tap Join voice.</string>
+    <string name="location_required_banner">Turn on Location so Android can start a local hotspot.</string>
+    <string name="open_location_settings">Open Location settings</string>
+    <string name="grant_permissions">Grant permissions</string>
+    <string name="host_waiting_scan">Waiting for passenger to scan</string>
+    <string name="host_starting_hotspot">Starting local hotspot…</string>
+    <string name="host_code_label">Session code</string>
+    <string name="join_scan_qr_button">Scan rider\'s QR</string>
+    <string name="join_connecting_wifi">Connecting to rider\'s Wi-Fi…</string>
+    <string name="join_connecting_udp">Opening voice link…</string>
+    <string name="manual_ip_hint">Host IP (e.g. 192.168.43.1)</string>
+    <string name="manual_port_hint">Port</string>
+    <string name="manual_code_hint">4-digit code</string>
+    <string name="manual_connect_button">Connect</string>
+    <string name="retry_button">Try again</string>
+
+    <string name="pill_link">Link</string>
+    <string name="pill_audio">Audio</string>
+    <string name="pill_mode">Mode</string>
+    <string name="mode_hands_free">Hands-free</string>
+    <string name="mode_ptt">Push to talk</string>
+    <string name="mic_live">Mic live</string>
+    <string name="mic_live_sub">Tap to mute</string>
+    <string name="mic_muted">Mic muted</string>
+    <string name="mic_muted_sub">Tap to unmute</string>
+    <string name="ptt_idle">Hold to talk</string>
+    <string name="ptt_idle_sub">Screen, Vol Down, or headset</string>
+    <string name="ptt_active">Transmitting</string>
+    <string name="ptt_active_sub">Release to stop</string>
+    <string name="wind_gate_label">Wind gate</string>
+    <string name="diagnostics_button">Diagnostics</string>
+    <string name="end_ride_button">End ride</string>
+
+    <string name="warn_speaker_fallback">No headset detected. Audio is using the phone speaker.</string>
+    <string name="warn_peer_on_call">Peer is on a phone call. Voice paused.</string>
+    <string name="warn_local_on_call">Paused for your phone call.</string>
+    <string name="warn_reconnecting">Link lost. Trying to reconnect automatically.</string>
+
+    <string name="diag_rtt">RTT latency</string>
+    <string name="diag_loss">Packet loss</string>
+    <string name="diag_route">Audio route</string>
+    <string name="diag_transport">Transport</string>
+    <string name="diag_jitter">Jitter buffer</string>
+    <string name="diag_locks">Wake &amp; Wi-Fi locks</string>
+    <string name="diag_battery">Battery mode</string>
+
+    <string name="notif_channel_name">RiderLink Intercom</string>
+    <string name="notif_channel_desc">Keeps offline intercom audio alive during rides</string>
+    <string name="notif_state_connected">Intercom Connected</string>
+    <string name="notif_state_reconnecting">Reconnecting to peer…</string>
+    <string name="notif_state_waiting">Waiting for peer…</string>
+    <string name="notif_state_ready">Intercom active</string>
+    <string name="notif_action_mute">Mute</string>
+    <string name="notif_action_unmute">Unmute</string>
+    <string name="notif_action_stop">End ride</string>
+</resources>

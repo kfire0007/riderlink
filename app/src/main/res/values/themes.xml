@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RiderLink" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/cockpit_black</item>
+        <item name="android:colorBackground">@color/cockpit_black</item>
+        <item name="android:statusBarColor">@color/cockpit_black</item>
+        <item name="android:navigationBarColor">@color/cockpit_black</item>
+        <item name="colorPrimary">@color/signal_amber</item>
+        <item name="colorOnPrimary">@color/cockpit_black</item>
+        <item name="colorSecondary">@color/live_emerald</item>
+        <item name="colorSurface">@color/panel_asphalt</item>
+        <item name="colorOnSurface">@color/ink_white</item>
+    </style>
+</resources>

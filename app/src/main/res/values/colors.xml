@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="cockpit_black">#000000</color>
+    <color name="panel_asphalt">#141517</color>
+    <color name="panel_pressed">#1F2226</color>
+    <color name="bezel_steel">#272A2E</color>
+    <color name="signal_amber">#F59E0B</color>
+    <color name="live_emerald">#22C55E</color>
+    <color name="cutoff_crimson">#EF4444</color>
+    <color name="ink_white">#F8FAFC</color>
+    <color name="ink_slate">#94A3B8</color>
+    <color name="qr_frame_white">#FFFFFF</color>
+</resources>
