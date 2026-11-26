@@ -237,22 +237,30 @@ class RideActivity : AppCompatActivity() {
             if (talk.isMuted || diag.isMuted) {
                 binding.btnCockpitCenter.setBackgroundResource(R.drawable.bg_cockpit_ring_muted)
                 binding.txtCenterPrimary.setText(R.string.mic_muted)
+                binding.txtCenterPrimary.setTextColor(ContextCompat.getColor(this, R.color.ink_white))
                 binding.txtCenterSub.setText(R.string.mic_muted_sub)
+                binding.txtCenterSub.setTextColor(ContextCompat.getColor(this, R.color.ink_slate))
             } else {
                 binding.btnCockpitCenter.setBackgroundResource(R.drawable.bg_cockpit_ring_live)
                 binding.txtCenterPrimary.setText(R.string.mic_live)
+                binding.txtCenterPrimary.setTextColor(ContextCompat.getColor(this, R.color.ink_white))
                 binding.txtCenterSub.setText(R.string.mic_live_sub)
+                binding.txtCenterSub.setTextColor(ContextCompat.getColor(this, R.color.ink_slate))
             }
         } else {
             binding.panelWindGate.visibility = View.GONE
             if (talk.isPttTransmitting) {
                 binding.btnCockpitCenter.setBackgroundResource(R.drawable.bg_cockpit_ring_ptt_active)
                 binding.txtCenterPrimary.setText(R.string.ptt_active)
+                binding.txtCenterPrimary.setTextColor(ContextCompat.getColor(this, R.color.cockpit_black))
                 binding.txtCenterSub.setText(R.string.ptt_active_sub)
+                binding.txtCenterSub.setTextColor(ContextCompat.getColor(this, R.color.cockpit_black))
             } else {
                 binding.btnCockpitCenter.setBackgroundResource(R.drawable.bg_cockpit_ring_ptt_idle)
                 binding.txtCenterPrimary.setText(R.string.ptt_idle)
+                binding.txtCenterPrimary.setTextColor(ContextCompat.getColor(this, R.color.ink_white))
                 binding.txtCenterSub.setText(R.string.ptt_idle_sub)
+                binding.txtCenterSub.setTextColor(ContextCompat.getColor(this, R.color.ink_slate))
             }
         }
     }

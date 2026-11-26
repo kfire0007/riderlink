@@ -1,5 +1,7 @@
 package com.riderlink.intercom.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -8,6 +10,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
 import android.view.View
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -35,6 +38,7 @@ class PairActivity : AppCompatActivity() {
     private var isIphoneHostTab = false
     private var iphoneStepSafari = false
     private var lastHostQrPayload: QrPayload? = null
+    private var lastScannedQr: QrPayload? = null
 
     private var service: IntercomForegroundService? = null
     private var bound = false
@@ -58,6 +62,8 @@ class PairActivity : AppCompatActivity() {
             return@registerForActivityResult
         }
         hideError()
+        lastScannedQr = parsed
+        showWifiFallbackPanel(parsed)
         ensureServiceStartedAndJoinQr(parsed)
     }
 
@@ -68,6 +74,8 @@ class PairActivity : AppCompatActivity() {
             bound = true
             observeServiceState(s)
             if (role == Role.HOST_RIDER) {
+                updatePreFlightAndStartIfReady()
+            } else if (bound) {
                 updatePreFlightAndStartIfReady()
             }
         }
@@ -120,6 +128,8 @@ class PairActivity : AppCompatActivity() {
             renderRolePanels()
             if (role == Role.HOST_RIDER) {
                 updatePreFlightAndStartIfReady()
+            } else if (bound) {
+                updatePreFlightAndStartIfReady()
             }
         }
 
@@ -135,7 +145,27 @@ class PairActivity : AppCompatActivity() {
                 permissionLauncher.launch(missing.toTypedArray())
                 return@setOnClickListener
             }
+            if (!PermissionHelper.isLocationEnabledForHotspot(this)) {
+                updatePreFlightAndStartIfReady()
+                return@setOnClickListener
+            }
             launchQrScanner()
+        }
+
+        binding.btnCopyOpenWifi.setOnClickListener {
+            val qr = lastScannedQr ?: return@setOnClickListener
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("RiderLink Wi-Fi Password", qr.passphrase))
+            Toast.makeText(this, "Password copied. Connect to ${qr.ssid} then return.", Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+        }
+
+        binding.btnConnectAfterWifi.setOnClickListener {
+            val qr = lastScannedQr ?: return@setOnClickListener
+            val gatewayIp = LanFallbackConnector.findActiveWifiGatewayIp(this) ?: qr.hostIp
+            hideError()
+            ensureServiceStarted()
+            service?.joinViaManualLan(gatewayIp, qr.udpPort, qr.sessionToken)
         }
 
         binding.btnManualConnect.setOnClickListener {
@@ -166,6 +196,8 @@ class PairActivity : AppCompatActivity() {
             hideError()
             if (role == Role.HOST_RIDER) {
                 updatePreFlightAndStartIfReady()
+            } else if (bound) {
+                updatePreFlightAndStartIfReady()
             }
         }
 
@@ -179,7 +211,7 @@ class PairActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (role == Role.HOST_RIDER && bound) {
+        if (bound) {
             updatePreFlightAndStartIfReady()
         }
     }
@@ -252,8 +284,7 @@ class PairActivity : AppCompatActivity() {
             return
         }
 
-        if (role == Role.HOST_RIDER &&
-            selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT &&
+        if (selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT &&
             !PermissionHelper.isLocationEnabledForHotspot(this)
         ) {
             binding.bannerPreFlight.visibility = View.VISIBLE
@@ -337,6 +368,11 @@ class PairActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun showWifiFallbackPanel(qr: QrPayload) {
+        binding.panelJoinWifiFallback.visibility = View.VISIBLE
+        binding.txtFallbackWifiCreds.text = "Wi-Fi: ${qr.ssid}\nPassword: ${qr.passphrase}"
     }
 
     private fun showError(msg: String) {

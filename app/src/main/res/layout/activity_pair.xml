@@ -226,6 +226,53 @@
                 android:gravity="center"
                 android:textColor="@color/ink_slate"
                 android:textSize="15sp" />
+
+            <LinearLayout
+                android:id="@+id/panelJoinWifiFallback"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:background="@drawable/bg_status_pill"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/join_wifi_fallback_title"
+                    android:textColor="@color/signal_amber"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/txtFallbackWifiCreds"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:fontFeatureSettings="tnum"
+                    android:textColor="@color/ink_white"
+                    android:textSize="14sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCopyOpenWifi"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/join_copy_open_wifi"
+                    android:textColor="@color/ink_white" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnConnectAfterWifi"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="8dp"
+                    android:backgroundTint="@color/live_emerald"
+                    android:text="@string/join_connect_on_wifi"
+                    android:textColor="@color/cockpit_black"
+                    android:textStyle="bold" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- JOIN MANUAL LAN PANEL -->

@@ -24,7 +24,7 @@
     <string name="iphone_step_safari">2. Open Safari</string>
     <string name="iphone_hint_wifi">Point the iPhone Camera here and tap Join Network.</string>
     <string name="iphone_hint_safari">Scan with iPhone Camera to open Safari, tap Show Details then visit this website, then tap Join voice.</string>
-    <string name="location_required_banner">Turn on Location so Android can start a local hotspot.</string>
+    <string name="location_required_banner">Turn on Location so Android can create or join a local Wi-Fi link.</string>
     <string name="open_location_settings">Open Location settings</string>
     <string name="grant_permissions">Grant permissions</string>
     <string name="host_waiting_scan">Waiting for passenger to scan</string>
@@ -33,6 +33,9 @@
     <string name="join_scan_qr_button">Scan rider\'s QR</string>
     <string name="join_connecting_wifi">Connecting to rider\'s Wi-Fi…</string>
     <string name="join_connecting_udp">Opening voice link…</string>
+    <string name="join_wifi_fallback_title">If the Wi-Fi popup keeps loading:</string>
+    <string name="join_copy_open_wifi">Copy password &amp; open Wi-Fi</string>
+    <string name="join_connect_on_wifi">I connected on Wi-Fi, start voice</string>
     <string name="manual_ip_hint">Host IP (e.g. 192.168.43.1)</string>
     <string name="manual_port_hint">Port</string>
     <string name="manual_code_hint">4-digit code</string>

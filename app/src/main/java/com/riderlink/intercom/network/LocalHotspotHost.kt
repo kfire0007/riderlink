@@ -126,14 +126,20 @@ class LocalHotspotHost(
 
     private fun findSoftApIpv4(preExistingIps: Set<String>): String? {
         val candidates = listAllInterfaceAddresses()
-        // 1. Prefer any newly created interface IP not present before startLocalOnlyHotspot()
+        val apPrefixes = listOf("ap", "swlan", "softap", "wlan")
+        // 1. Newly created SoftAP gateway (192.168.x.1)
         val newIps = candidates.filter { it.second !in preExistingIps }
+        newIps.firstOrNull { it.second.startsWith("192.168.") && it.second.endsWith(".1") }?.let { return it.second }
+        newIps.firstOrNull { (iface, _) -> apPrefixes.any { iface.startsWith(it) } }?.let { return it.second }
         newIps.firstOrNull { it.second.endsWith(".1") }?.let { return it.second }
-        newIps.firstOrNull()?.let { return it.second }
+        newIps.firstOrNull()?.let {
+            Log.i(TAG, "Using new candidate IP from $candidates")
+            return it.second
+        }
 
         // 2. Otherwise prefer typical SoftAP interface prefixes (ap*, swlan*, softap*, wlan1/2*)
-        val apPrefixes = listOf("ap", "swlan", "softap", "wlan1", "wlan2")
-        for (prefix in apPrefixes) {
+        val fallbackApPrefixes = listOf("ap", "swlan", "softap", "wlan1", "wlan2")
+        for (prefix in fallbackApPrefixes) {
             candidates.firstOrNull { it.first.startsWith(prefix) }?.let { return it.second }
         }
         return null
@@ -148,7 +154,7 @@ class LocalHotspotHost(
         } catch (_: Exception) {
             return emptyList()
         }
-        val ignoredPrefixes = listOf("rmnet", "ccmni", "pdp", "v4-", "tun", "ppp", "dummy")
+        val ignoredPrefixes = listOf("rmnet", "ccmni", "pdp", "v4-", "clat", "tun", "ppp", "dummy", "epdg", "ims")
         val result = mutableListOf<Pair<String, String>>()
         for (iface in interfaces) {
             if (!iface.isUp || iface.isLoopback) continue
