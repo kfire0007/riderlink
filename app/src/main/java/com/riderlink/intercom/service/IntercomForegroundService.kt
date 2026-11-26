@@ -131,8 +131,10 @@ class IntercomForegroundService : Service() {
                 override fun onClientConnected(clientIp: String) {
                     webRxSeq = 0L
                     connectionController.markWebBridgeConnected(clientIp)
-                    handleLinkStateChange(LinkState.CONNECTED)
-                    updateNotification()
+                    serviceScope.launch(Dispatchers.Main.immediate) {
+                        handleLinkStateChange(LinkState.CONNECTED)
+                        updateNotification()
+                    }
                 }
 
                 override fun onAudioFrame(pcmBytes: ByteArray, offset: Int, length: Int) {
@@ -154,8 +156,10 @@ class IntercomForegroundService : Service() {
 
                 override fun onClientDisconnected() {
                     connectionController.markWebBridgeDisconnected()
-                    handleLinkStateChange(LinkState.RECONNECTING)
-                    updateNotification()
+                    serviceScope.launch(Dispatchers.Main.immediate) {
+                        handleLinkStateChange(LinkState.RECONNECTING)
+                        updateNotification()
+                    }
                 }
             }
         )
@@ -194,8 +198,10 @@ class IntercomForegroundService : Service() {
                 }
 
                 override fun onLinkStateChanged(state: LinkState) {
-                    handleLinkStateChange(state)
-                    updateNotification()
+                    serviceScope.launch(Dispatchers.Main.immediate) {
+                        handleLinkStateChange(state)
+                        updateNotification()
+                    }
                 }
             }
         )

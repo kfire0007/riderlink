@@ -5,6 +5,8 @@ import android.content.Intent
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 
 /**
@@ -49,7 +51,7 @@ class HardwareButtonController(
                 }
                 return super.onMediaButtonEvent(mediaButtonIntent)
             }
-        })
+        }, Handler(Looper.getMainLooper()))
         val playbackState = PlaybackState.Builder()
             .setActions(PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE)
             .setState(PlaybackState.STATE_PLAYING, 0L, 1.0f)

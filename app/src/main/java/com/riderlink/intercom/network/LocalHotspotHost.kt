@@ -148,10 +148,12 @@ class LocalHotspotHost(
         } catch (_: Exception) {
             return emptyList()
         }
+        val ignoredPrefixes = listOf("rmnet", "ccmni", "pdp", "v4-", "tun", "ppp", "dummy")
         val result = mutableListOf<Pair<String, String>>()
         for (iface in interfaces) {
             if (!iface.isUp || iface.isLoopback) continue
             val name = iface.name.lowercase()
+            if (ignoredPrefixes.any { name.startsWith(it) }) continue
             for (addr in iface.inetAddresses.toList().filterIsInstance<Inet4Address>()) {
                 if (!addr.isLoopbackAddress && addr.isSiteLocalAddress) {
                     addr.hostAddress?.let { result.add(name to it) }
