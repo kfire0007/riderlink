@@ -31,7 +31,8 @@ class UdpAudioTransport(
     }
 
     private val running = AtomicBoolean(false)
-    private val txSeq = AtomicLong(0L)
+    private val audioTxSeq = AtomicLong(0L)
+    private val controlTxSeq = AtomicLong(0L)
     private val txLock = Any()
 
     @Volatile
@@ -77,7 +78,8 @@ class UdpAudioTransport(
         }
         socket = sock
         peerAddress = initialPeer
-        txSeq.set(0L)
+        audioTxSeq.set(0L)
+        controlTxSeq.set(0L)
 
         heartbeatMonitor.start(initialPeer?.let { "${it.address.hostAddress}:${it.port}" })
         logInfo("UDP started: localPort=${sock.localPort}, peer=$initialPeer, boundNet=${boundNetwork != null}")
@@ -116,7 +118,7 @@ class UdpAudioTransport(
         val sock = socket ?: return false
         if (!running.get()) return false
 
-        val seq = txSeq.incrementAndGet()
+        val seq = audioTxSeq.incrementAndGet()
         val ts = nowMs() and 0xFFFFFFFFL
         synchronized(txLock) {
             val totalLen = PacketCodec.encode(
@@ -140,7 +142,7 @@ class UdpAudioTransport(
         val sock = socket ?: return false
         if (!running.get()) return false
 
-        val seq = txSeq.incrementAndGet()
+        val seq = controlTxSeq.incrementAndGet()
         val ts = nowMs() and 0xFFFFFFFFL
         synchronized(txLock) {
             txControlPayload[0] = controlCode
@@ -233,7 +235,7 @@ class UdpAudioTransport(
     }
 
     private fun sendPing(sock: DatagramSocket, peer: InetSocketAddress, now: Long) {
-        val seq = txSeq.incrementAndGet()
+        val seq = controlTxSeq.incrementAndGet()
         synchronized(txLock) {
             val totalLen = PacketCodec.encode(
                 packetType = PacketType.PING,
@@ -253,7 +255,7 @@ class UdpAudioTransport(
 
     private fun sendPong(sock: DatagramSocket, peer: InetSocketAddress?, echoedTs: Long) {
         if (peer == null) return
-        val seq = txSeq.incrementAndGet()
+        val seq = controlTxSeq.incrementAndGet()
         synchronized(txLock) {
             val totalLen = PacketCodec.encode(
                 packetType = PacketType.PONG,

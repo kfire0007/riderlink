@@ -201,7 +201,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFeatureSettings="tnum"
-                    android:text="Low (350)"
+                    android:text="Low (150)"
                     android:textColor="@color/signal_amber"
                     android:textSize="14sp" />
             </LinearLayout>
@@ -212,7 +212,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:max="2000"
-                android:progress="350" />
+                android:progress="150" />
         </LinearLayout>
 
         <!-- DIAGNOSTICS & END RIDE ACTIONS -->

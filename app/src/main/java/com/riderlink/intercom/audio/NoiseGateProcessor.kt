@@ -57,7 +57,7 @@ class NoiseGateProcessor(
     }
 
     companion object {
-        const val DEFAULT_THRESHOLD_RMS = 350
+        const val DEFAULT_THRESHOLD_RMS = 150
         const val DEFAULT_HOLD_FRAMES = 13 // 260 ms at 20 ms/frame
 
         fun computeRms(samples: ShortArray, sampleCount: Int): Double {

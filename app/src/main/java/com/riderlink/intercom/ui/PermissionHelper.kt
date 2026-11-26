@@ -5,9 +5,29 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.Build
+import android.view.View
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 object PermissionHelper {
+
+    fun applySystemBarInsets(root: View) {
+        val baseLeft = root.paddingLeft
+        val baseTop = root.paddingTop
+        val baseRight = root.paddingRight
+        val baseBottom = root.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(
+                baseLeft + bars.left,
+                baseTop + bars.top,
+                baseRight + bars.right,
+                baseBottom + bars.bottom
+            )
+            insets
+        }
+    }
 
     fun requiredPermissions(includeCamera: Boolean): Array<String> {
         val list = mutableListOf(

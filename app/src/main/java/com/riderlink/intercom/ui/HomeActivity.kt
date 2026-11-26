@@ -18,6 +18,7 @@ class HomeActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityHomeBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        PermissionHelper.applySystemBarInsets(binding.root)
 
         binding.btnHostPlate.setOnClickListener {
             openPairScreen(Role.HOST_RIDER)

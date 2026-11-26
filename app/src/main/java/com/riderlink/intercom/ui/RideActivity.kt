@@ -56,6 +56,7 @@ class RideActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityRideBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        PermissionHelper.applySystemBarInsets(binding.root)
 
         diagnosticsDrawer = LiveDiagnosticsDrawer(this, binding.diagnosticsDrawer)
 

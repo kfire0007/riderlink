@@ -82,6 +82,7 @@ class PairActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityPairBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        PermissionHelper.applySystemBarInsets(binding.root)
 
         val roleName = intent.getStringExtra(EXTRA_ROLE) ?: Role.HOST_RIDER.name
         role = Role.valueOf(roleName)

@@ -99,4 +99,38 @@ class AudioPipelineTest {
         // When maxDelayFrames=4 and 1..10 are pushed, overflow catch-up keeps depth <= 4 (nextPlaySeq = 7)
         assertEquals(70.toShort(), out[0])
     }
+
+    @Test
+    fun jitterBufferResumesCleanlyAfterSilenceOrPttPause() {
+        val jb = JitterBuffer(initialTargetDelayFrames = 2, maxDelayFrames = 8)
+        val out = ShortArray(AudioConfig.SAMPLES_PER_FRAME)
+        fun frame(v: Short) = ShortArray(AudioConfig.SAMPLES_PER_FRAME) { v }
+
+        // First talkspurt: seq 1, 2, 3
+        jb.push(1L, frame(100), AudioConfig.SAMPLES_PER_FRAME)
+        jb.push(2L, frame(200), AudioConfig.SAMPLES_PER_FRAME)
+        jb.push(3L, frame(300), AudioConfig.SAMPLES_PER_FRAME)
+        assertTrue(jb.pop(out))
+        assertEquals(100.toShort(), out[0])
+        assertTrue(jb.pop(out))
+        assertEquals(200.toShort(), out[0])
+        assertTrue(jb.pop(out))
+        assertEquals(300.toShort(), out[0])
+
+        // Simulate 2 seconds (100 frames) of silence / PTT released
+        repeat(100) { jb.pop(out) }
+
+        // Second talkspurt: seq 4, 5, 6 must re-sync with zero late drops
+        jb.push(4L, frame(400), AudioConfig.SAMPLES_PER_FRAME)
+        jb.push(5L, frame(500), AudioConfig.SAMPLES_PER_FRAME)
+        jb.push(6L, frame(600), AudioConfig.SAMPLES_PER_FRAME)
+
+        assertEquals(0L, jb.packetsDroppedLate)
+        assertTrue(jb.pop(out))
+        assertEquals(400.toShort(), out[0])
+        assertTrue(jb.pop(out))
+        assertEquals(500.toShort(), out[0])
+        assertTrue(jb.pop(out))
+        assertEquals(600.toShort(), out[0])
+    }
 }
