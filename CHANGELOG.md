@@ -2,13 +2,19 @@
 
 All notable changes to **RiderLink** are documented here.
 
-## [Unreleased]
+## [0.1.7] - 2026-11-28
 ### Changed
 - **App-scoped Ride module** (`ride/Ride.kt`, [ADR 0001](docs/adr/0001-app-scoped-ride-service-as-foreground-keeper.md)): pairing, the local network, links to other phones, and ending a ride now live in one module built by `RiderLinkApp`. It replaces `ConnectionController`, the service's `start*`/`join*`/`stopSession` pass-throughs, `pendingJoinQr`, `ConnectionState` and `TransportMode`. Activities call the Ride directly and never bind the service.
 - `IntercomForegroundService` only keeps the app in the foreground (notification, wake/Wi-Fi locks) while a ride is live, and is `START_NOT_STICKY`. The voice side (audio engine, talk control, headset routing, call pause, buttons) moved to the app-scoped `RideVoice`.
 - Android Wi-Fi, UDP and Safari code now sit behind small replaceable interfaces (`ride/RidePorts.kt`), with 35 JVM tests for the Ride running against fakes.
 
 ### Fixed
+- **QR join on Android's Wi-Fi chooser:** the app no longer cancels the system "Searching for device…" prompt mid-way (no request timeout; auto-retry only on fast fails under 3 s), and waits 350 ms after the scanner closes before asking to join.
+- **Dual-SIM phones:** a phone call on either SIM now pauses the ride. Previously a call on the non-default SIM went unnoticed and the intercom kept transmitting.
+- **The Host ending the ride is now audible:** the Peer hears the "link lost" chime before the audio stops, instead of only an on-screen message.
+- **The Host sees a fresh QR when it needs one:** after Try again on Network lost, or when the last Peer leaves, the Host goes back to the pairing screen, which opens on the ride's own tab.
+- **No dead QR on screen:** the pairing screen closes when its ride ends (for example End ride from the notification), and clears an old error once the ride recovers.
+- **Switching rides starts clean:** changing the Host's tab or joining while hosting no longer carries mute or call-pause state into the new ride.
 - **Manual join and "I connected on Wi-Fi" taps no longer do nothing** when pressed before the service had bound.
 - **iPhone Safari peers:**
   - A Safari peer that disconnected no longer leaves the stats stuck on the dead peer.

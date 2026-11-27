@@ -16,7 +16,7 @@
 
 ---
 
-## Current Features (`v0.1.6`)
+## Current Features (`v0.1.7`)
 
 - **1-Scan Offline QR Pairing:** Rider creates a private local Wi-Fi link; passenger scans the QR code offline (with automatic 1st-attempt retry and 1-tap Wi-Fi Settings fallback).
 - **Manual Wi-Fi / Hotspot Fallback:** Works on any phone hotspot or shared local Wi-Fi using Host IP, Port, and a 4-digit session code.
