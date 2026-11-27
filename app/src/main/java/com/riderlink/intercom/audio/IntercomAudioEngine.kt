@@ -9,6 +9,7 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.os.Process
+import com.riderlink.intercom.protocol.CodecId
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -20,11 +21,16 @@ interface GroupMixing {
     /** The riders to mix for right now (hot path, playback thread). */
     fun riders(): List<Any>
 
+    /** The codec [rider] expects ([CodecId]). */
+    fun codecFor(rider: Any): Byte
+
     /** Sends one encoded mix-minus frame to [rider] (hot path, playback thread; never blocks). */
     fun send(rider: Any, bytes: ByteArray, offset: Int, length: Int, codecId: Byte)
 }
 
 class IntercomAudioEngine(
+    /** The codec a Peer's mic is sent in (its Link's agreed codec). Unused while hosting. */
+    private val txCodecId: () -> Byte = { CodecId.PCM16_16K },
     private val shouldTransmit: () -> Boolean,
     private val isBypassNoiseGate: () -> Boolean,
     private val onEncodedFrame: (bytes: ByteArray, offset: Int, length: Int, codecId: Byte) -> Unit
@@ -54,6 +60,21 @@ class IntercomAudioEngine(
 
     private val groupMixer = GroupAudioMixer<Any>()
     private val mixTxBytes = ByteArray(AudioConfig.BYTES_PER_FRAME)
+
+    // Opus keeps state per stream (docs/adr/0002):
+    private val micOpus = OpusCodec() // capture thread: a Peer's mic
+    private val opusDecoders = HashMap<Any, OpusCodec>() // rxDecodeLock: one per source
+    private val riderEncoders = HashMap<Any, OpusCodec>() // playback thread: a talker's own mix
+    private val listenerOpus = OpusCodec() // playback thread: the shared listener mix
+    private val sharedOpusBytes = ByteArray(OpusCodec.MAX_PACKET_BYTES)
+    private val sharedPcmBytes = ByteArray(AudioConfig.BYTES_PER_FRAME)
+    private var sharedOpusLen = NOT_ENCODED
+    private var sharedPcmLen = NOT_ENCODED
+
+    /** Rolling mix-tick cost while hosting, for diagnostics and field checks. */
+    @Volatile
+    var lastMixTickMicros: Long = 0L
+        private set
 
     private val txCapturePcm = ShortArray(AudioConfig.SAMPLES_PER_FRAME)
     private val txEncodedBytes = ByteArray(AudioConfig.BYTES_PER_FRAME)
@@ -85,6 +106,8 @@ class IntercomAudioEngine(
         chimePlayer.clear()
         jitterBuffer.reset()
         groupMixer.reset()
+        synchronized(rxDecodeLock) { opusDecoders.clear() }
+        riderEncoders.clear()
     }
 
     fun setPausedForCall(paused: Boolean) {
@@ -106,11 +129,15 @@ class IntercomAudioEngine(
     }
 
     /** One frame from [source] (a rider when hosting, the Host's mix on a Peer). */
-    fun onIncomingAudio(source: Any, sequenceNumber: Long, payload: ByteArray, offset: Int, length: Int) {
-        if (!running.get() || pausedForCall.get()) return
-        if (length < AudioConfig.BYTES_PER_FRAME) return
+    fun onIncomingAudio(source: Any, codecId: Byte, sequenceNumber: Long, payload: ByteArray, offset: Int, length: Int) {
+        if (!running.get() || pausedForCall.get() || length <= 0) return
+        if (codecId != CodecId.OPUS && length < AudioConfig.BYTES_PER_FRAME) return
         synchronized(rxDecodeLock) {
-            val samples = codec.decode(payload, offset, AudioConfig.BYTES_PER_FRAME, rxDecodePcm)
+            val samples = if (codecId == CodecId.OPUS) {
+                opusDecoders.getOrPut(source) { OpusCodec() }.decode(payload, offset, length, rxDecodePcm)
+            } else {
+                codec.decode(payload, offset, AudioConfig.BYTES_PER_FRAME, rxDecodePcm)
+            }
             if (groupMixing != null) {
                 groupMixer.onIncoming(source, sequenceNumber, rxDecodePcm, samples)
             } else {
@@ -216,8 +243,9 @@ class IntercomAudioEngine(
                     // Hosting: the mixer sends the Host's voice inside each rider's mix-minus.
                     groupMixer.submitHostMic(if (pass) txCapturePcm else null)
                 } else if (pass) {
-                    val encodedLen = codec.encode(txCapturePcm, AudioConfig.SAMPLES_PER_FRAME, txEncodedBytes, 0)
-                    onEncodedFrame(txEncodedBytes, 0, encodedLen, codec.codecId)
+                    val tx = if (txCodecId() == CodecId.OPUS) micOpus else codec
+                    val encodedLen = tx.encode(txCapturePcm, AudioConfig.SAMPLES_PER_FRAME, txEncodedBytes, 0)
+                    if (encodedLen > 0) onEncodedFrame(txEncodedBytes, 0, encodedLen, tx.codecId)
                 }
             }
         } catch (_: Exception) {
@@ -275,10 +303,13 @@ class IntercomAudioEngine(
             while (running.get() && !pausedForCall.get() && !Thread.currentThread().isInterrupted) {
                 val mixing = groupMixing
                 if (mixing != null) {
-                    groupMixer.tick(mixing.riders(), rxPlayPcm) { rider, pcm ->
-                        val len = codec.encode(pcm, AudioConfig.SAMPLES_PER_FRAME, mixTxBytes, 0)
-                        mixing.send(rider, mixTxBytes, 0, len, codec.codecId)
+                    val tickStart = System.nanoTime()
+                    sharedOpusLen = NOT_ENCODED
+                    sharedPcmLen = NOT_ENCODED
+                    groupMixer.tick(mixing.riders(), rxPlayPcm) { rider, pcm, shared ->
+                        sendMix(mixing, rider, pcm, shared)
                     }
+                    lastMixTickMicros = (System.nanoTime() - tickStart) / 1_000L
                     if (remoteAudioMuted) rxPlayPcm.fill(0)
                 } else if (remoteAudioMuted) {
                     rxPlayPcm.fill(0)
@@ -292,6 +323,26 @@ class IntercomAudioEngine(
         } catch (_: Exception) {
         } finally {
             releasePlayer()
+        }
+    }
+
+    /** Encodes one rider's mix in its codec (the shared listener mix once per tick) and sends it. */
+    private fun sendMix(mixing: GroupMixing, rider: Any, pcm: ShortArray, shared: Boolean) {
+        val n = AudioConfig.SAMPLES_PER_FRAME
+        if (mixing.codecFor(rider) == CodecId.OPUS) {
+            if (shared) {
+                if (sharedOpusLen == NOT_ENCODED) sharedOpusLen = listenerOpus.encode(pcm, n, sharedOpusBytes, 0)
+                if (sharedOpusLen > 0) mixing.send(rider, sharedOpusBytes, 0, sharedOpusLen, CodecId.OPUS)
+            } else {
+                val len = riderEncoders.getOrPut(rider) { OpusCodec() }.encode(pcm, n, mixTxBytes, 0)
+                if (len > 0) mixing.send(rider, mixTxBytes, 0, len, CodecId.OPUS)
+            }
+        } else if (shared) {
+            if (sharedPcmLen == NOT_ENCODED) sharedPcmLen = codec.encode(pcm, n, sharedPcmBytes, 0)
+            mixing.send(rider, sharedPcmBytes, 0, sharedPcmLen, CodecId.PCM16_16K)
+        } else {
+            val len = codec.encode(pcm, n, mixTxBytes, 0)
+            mixing.send(rider, mixTxBytes, 0, len, CodecId.PCM16_16K)
         }
     }
 
@@ -387,5 +438,9 @@ class IntercomAudioEngine(
             track.release()
         } catch (_: Exception) {
         }
+    }
+
+    private companion object {
+        const val NOT_ENCODED = -1
     }
 }

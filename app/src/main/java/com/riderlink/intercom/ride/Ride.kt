@@ -383,8 +383,8 @@ class Ride(
         override fun onControl(link: PeerLink, control: PeerControl) =
             onScheduler(myEpoch) { this@Ride.onControl(link, control) }
 
-        override fun onVoice(link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
-            if (link in voiceLinks) voiceReceiver.onVoice(link, sequence, bytes, offset, length)
+        override fun onVoice(link: PeerLink, codecId: Byte, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
+            if (link in voiceLinks) voiceReceiver.onVoice(link, codecId, sequence, bytes, offset, length)
         }
 
         override fun onRejected(link: PeerLink, reason: String) = onScheduler(myEpoch) { fail(reason) }

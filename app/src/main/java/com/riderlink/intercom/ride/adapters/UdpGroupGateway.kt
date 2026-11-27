@@ -83,6 +83,7 @@ class UdpGroupGateway(
         @Volatile var riderKey: Int,
         @Volatile var name: String,
         @Volatile var legacy: Boolean,
+        @Volatile override var codecId: Byte,
         private val owner: Session
     ) : PeerLink {
         override val kind = LinkKind.ANDROID
@@ -194,7 +195,7 @@ class UdpGroupGateway(
                     sendTo(from, ControlCode.JOIN_ACK, JoinAck(JoinAck.GROUP_FULL, CodecId.PCM16_16K, 0).encode())
                     return
                 }
-                sendTo(from, ControlCode.JOIN_ACK, JoinAck(member.senderId, CodecId.PCM16_16K, 0).encode())
+                sendTo(from, ControlCode.JOIN_ACK, JoinAck(member.senderId, member.codecId, 0).encode())
                 member.heartbeat.recordPacketReceived(now)
                 return
             }
@@ -213,7 +214,7 @@ class UdpGroupGateway(
                 PacketType.AUDIO -> {
                     member.heartbeat.recordPacketReceived(now)
                     member.heartbeat.recordAudioSequence(rxHeader.sequenceNumber)
-                    events.onVoice(member, rxHeader.sequenceNumber, rxBuffer, PacketHeader.HEADER_SIZE, payloadLen)
+                    events.onVoice(member, rxHeader.codecId, rxHeader.sequenceNumber, rxBuffer, PacketHeader.HEADER_SIZE, payloadLen)
                 }
                 PacketType.PING -> {
                     member.heartbeat.recordPacketReceived(now)
@@ -236,7 +237,12 @@ class UdpGroupGateway(
             member.name = req.name
             member.riderKey = req.riderKey
             member.legacy = false
+            member.codecId = codecFor(req)
         }
+
+        /** Opus for Peers that offer it (Phase 2 M1); PCM16 otherwise. */
+        private fun codecFor(req: JoinRequest): Byte =
+            if (req.flags and JoinRequest.FLAG_OPUS != 0) CodecId.OPUS else CodecId.PCM16_16K
 
         /** The same rider (same key) joining again from a new address: move the member over. */
         private fun rejoinByKey(from: InetSocketAddress, req: JoinRequest): Member? {
@@ -244,13 +250,14 @@ class UdpGroupGateway(
             val existing = members.values.firstOrNull { !it.legacy && it.riderKey == req.riderKey } ?: return null
             moveMember(existing, from)
             existing.name = req.name
+            existing.codecId = codecFor(req)
             log("Rider ${existing.senderId} '${req.name}' rejoined from $from")
             return existing
         }
 
         private fun admit(from: InetSocketAddress, req: JoinRequest): Member? {
             val id = freeSenderId() ?: return null
-            val member = Member(from, id, req.riderKey, req.name.ifBlank { DEFAULT_NAME }, legacy = false, owner = this)
+            val member = Member(from, id, req.riderKey, req.name.ifBlank { DEFAULT_NAME }, legacy = false, codecId = codecFor(req), owner = this)
             members[from] = member
             member.heartbeat.start("${from.address.hostAddress}:${from.port}")
             log("Rider $id '${member.name}' joined from $from")
@@ -267,7 +274,7 @@ class UdpGroupGateway(
 
         private fun admitLegacy(from: InetSocketAddress): Member? {
             val id = freeSenderId() ?: return null
-            val member = Member(from, id, 0, DEFAULT_NAME, legacy = true, owner = this)
+            val member = Member(from, id, 0, DEFAULT_NAME, legacy = true, codecId = CodecId.PCM16_16K, owner = this)
             members[from] = member
             member.heartbeat.start("${from.address.hostAddress}:${from.port}")
             log("Legacy rider $id joined from $from")
@@ -320,7 +327,7 @@ class UdpGroupGateway(
         fun sendAudio(member: Member, bytes: ByteArray, offset: Int, length: Int) {
             if (!running || members[member.address] !== member) return
             val seq = member.audioSeq.incrementAndGet()
-            send(member.address, PacketType.AUDIO, CodecId.PCM16_16K, seq, nowMs() and 0xFFFFFFFFL, bytes, offset, length)
+            send(member.address, PacketType.AUDIO, member.codecId, seq, nowMs() and 0xFFFFFFFFL, bytes, offset, length)
         }
 
         fun sendControl(member: Member, code: Byte, extra: ByteArray?) {

@@ -156,7 +156,8 @@ class RideActivity : AppCompatActivity() {
                                 wakeLockHeld = app.locks.isWakeLockHeld,
                                 wifiLockHeld = app.locks.isWifiLockHeld,
                                 batteryExempt = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(this@RideActivity),
-                                jitterDepthFrames = app.voice.jitterDepthFrames
+                                jitterDepthFrames = app.voice.jitterDepthFrames,
+                                mixTickMicros = if (s.ride.role == RideRole.HOST) app.voice.mixTickMicros else 0L
                             )
                         )
                     }

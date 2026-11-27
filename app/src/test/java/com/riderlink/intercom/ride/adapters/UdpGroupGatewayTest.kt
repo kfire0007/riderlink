@@ -2,6 +2,7 @@ package com.riderlink.intercom.ride.adapters
 
 import com.riderlink.intercom.network.LinkState
 import com.riderlink.intercom.network.UdpAudioTransport
+import com.riderlink.intercom.protocol.CodecId
 import com.riderlink.intercom.protocol.ControlCode
 import com.riderlink.intercom.protocol.JoinAck
 import com.riderlink.intercom.protocol.JoinRequest
@@ -124,6 +125,18 @@ class UdpGroupGatewayTest {
     }
 
     @Test
+    fun aPeerOfferingOpusGetsOpus_andAPlainPeerStaysOnPcm() {
+        val port = open()
+        val opus = peer(port).also { it.join("Ana", key = 1, flags = JoinRequest.FLAG_ANDROID or JoinRequest.FLAG_OPUS) }
+        val plain = peer(port).also { it.join("Ben", key = 2) }
+        eventually { opus.ack != null && plain.ack != null && events.linked.size == 2 }
+
+        assertEquals(CodecId.OPUS, opus.ack!!.codecId)
+        assertEquals(CodecId.PCM16_16K, plain.ack!!.codecId)
+        assertEquals(setOf(CodecId.OPUS, CodecId.PCM16_16K), events.linked.map { it.codecId }.toSet())
+    }
+
+    @Test
     fun aFullGroupRefusesTheNextRider() {
         val small = UdpGroupGateway(io = { it.run() }, port = 0, maxPeers = 1)
         try {
@@ -165,8 +178,8 @@ class UdpGroupGatewayTest {
             }
         ).also { it.start(localPort = 0, initialPeer = InetSocketAddress("127.0.0.1", hostPort)) }
 
-        fun join(name: String, key: Int) {
-            udp.sendControl(ControlCode.JOIN_REQ, JoinRequest(name, JoinRequest.FLAG_ANDROID, key).encode())
+        fun join(name: String, key: Int, flags: Int = JoinRequest.FLAG_ANDROID) {
+            udp.sendControl(ControlCode.JOIN_REQ, JoinRequest(name, flags, key).encode())
         }
     }
 
@@ -189,7 +202,7 @@ class UdpGroupGatewayTest {
             controls += link to control
         }
 
-        override fun onVoice(link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
+        override fun onVoice(link: PeerLink, codecId: Byte, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
             voice += link to bytes.copyOfRange(offset, offset + length)
         }
     }

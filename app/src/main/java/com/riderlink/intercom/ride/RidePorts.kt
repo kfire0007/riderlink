@@ -1,5 +1,7 @@
 package com.riderlink.intercom.ride
 
+import com.riderlink.intercom.protocol.CodecId
+
 /*
  * The seams the Ride talks through. Each has an Android adapter (ride/android/) and a fake
  * (app/src/test/.../ride/RideFakes.kt). Adapters may call back on any thread: the Ride hops
@@ -96,6 +98,9 @@ data class LinkStats(
  */
 interface PeerLink {
     val kind: LinkKind
+
+    /** The voice codec this link sends and expects ([CodecId]); PCM16 until a Host agrees on Opus. */
+    val codecId: Byte get() = CodecId.PCM16_16K
     fun sendVoice(bytes: ByteArray, offset: Int, length: Int)
     fun sendControl(control: PeerControl)
     fun sayGoodbye()
@@ -110,7 +115,7 @@ interface LinkEvents {
     fun onGoodbye(link: PeerLink)
     fun onControl(link: PeerLink, control: PeerControl)
     /** Hot path: called on the adapter's receive thread. [sequence] is contiguous per link. */
-    fun onVoice(link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int)
+    fun onVoice(link: PeerLink, codecId: Byte, sequence: Long, bytes: ByteArray, offset: Int, length: Int)
 
     /** The Host refused this Peer (e.g. the group is full). Peer side only. */
     fun onRejected(link: PeerLink, reason: String) {}
@@ -137,5 +142,5 @@ interface HostDialer {
 
 /** Receives voice frames from every link, on the link's receive thread. */
 fun interface VoiceReceiver {
-    fun onVoice(link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int)
+    fun onVoice(link: PeerLink, codecId: Byte, sequence: Long, bytes: ByteArray, offset: Int, length: Int)
 }
