@@ -10,6 +10,7 @@ import com.riderlink.intercom.protocol.JoinRequest
 import com.riderlink.intercom.protocol.PacketCodec
 import com.riderlink.intercom.protocol.PacketHeader
 import com.riderlink.intercom.protocol.PacketType
+import com.riderlink.intercom.protocol.RosterSync
 import com.riderlink.intercom.protocol.SenderId
 import com.riderlink.intercom.ride.LinkEvents
 import com.riderlink.intercom.ride.LinkKind
@@ -39,7 +40,8 @@ import java.util.concurrent.atomic.AtomicLong
  *  - When all [maxPeers] ids are taken, JOIN_REQ gets a refusing JOIN_ACK and legacy packets are ignored.
  *
  * Packets from a member that just said goodbye are ignored for [DEPARTED_QUIET_MS], so its last
- * heartbeats don't bring it straight back as a legacy member.
+ * heartbeats don't bring it straight back as a legacy member. A member the Host removed stays out
+ * until the ride ends: its rider key is refused with a REMOVED JOIN_ACK and its address is ignored.
  */
 class UdpGroupGateway(
     private val io: Executor,
@@ -89,6 +91,18 @@ class UdpGroupGateway(
         override val kind = LinkKind.ANDROID
         val audioSeq = AtomicLong(0L)
 
+        override val riderId: Int get() = senderId
+        override val riderName: String get() = name
+
+        override fun sendRoster(roster: RosterSync) {
+            val bytes = roster.encode()
+            io.execute { owner.sendControl(this, ControlCode.ROSTER_SYNC, bytes) }
+        }
+
+        override fun remove() {
+            owner.kick(this)
+        }
+
         val heartbeat = HeartbeatMonitor(
             nowMs = nowMs,
             onStateChanged = { state ->
@@ -134,6 +148,7 @@ class UdpGroupGateway(
         private var running = true
         val members = ConcurrentHashMap<InetSocketAddress, Member>()
         private val departedUntil = ConcurrentHashMap<InetSocketAddress, Long>()
+        private val removedKeys = ConcurrentHashMap.newKeySet<Int>()
         private val ctrlSeq = AtomicLong(0L)
         private val txLock = Any()
         private val txBuffer = ByteArray(PacketHeader.MAX_DATAGRAM_SIZE)
@@ -189,6 +204,10 @@ class UdpGroupGateway(
 
             if (isJoin) {
                 val req = JoinRequest.decode(rxBuffer, PacketHeader.HEADER_SIZE + 1, payloadLen - 1) ?: return
+                if (req.riderKey != 0 && req.riderKey in removedKeys) {
+                    sendTo(from, ControlCode.JOIN_ACK, JoinAck(JoinAck.REMOVED, CodecId.PCM16_16K, 0).encode())
+                    return
+                }
                 departedUntil.remove(from)
                 member = member?.also { upgrade(it, req) } ?: rejoinByKey(from, req) ?: admit(from, req)
                 if (member == null) {
@@ -296,6 +315,17 @@ class UdpGroupGateway(
             events.onGoodbye(member)
         }
 
+        /** The Host removed [member]: tell it, then keep it out for the rest of this ride. */
+        fun kick(member: Member) {
+            if (members.remove(member.address) == null) return
+            if (member.riderKey != 0) removedKeys += member.riderKey
+            departedUntil[member.address] = Long.MAX_VALUE
+            member.heartbeat.stop()
+            log("Rider ${member.senderId} '${member.name}' removed by the Host")
+            val to = member.address
+            io.execute { sendTo(to, ControlCode.HOST_KICK_PEER, null) }
+        }
+
         private fun freeSenderId(): Int? {
             val taken = members.values.mapTo(HashSet()) { it.senderId }
             return (1..maxPeers).firstOrNull { it !in taken }
@@ -318,7 +348,7 @@ class UdpGroupGateway(
                         member.heartbeat.recordPingSent(now)
                     }
                 }
-                departedUntil.entries.removeIf { now >= it.value }
+                departedUntil.entries.removeIf { it.value != Long.MAX_VALUE && now >= it.value }
             }
         }
 

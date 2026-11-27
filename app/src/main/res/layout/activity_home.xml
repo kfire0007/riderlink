@@ -45,11 +45,27 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/txtQuestion" />
 
+    <TextView
+        android:id="@+id/txtRiderName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:background="?attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        android:minHeight="40dp"
+        android:gravity="center_vertical"
+        android:textColor="@color/signal_amber"
+        android:textSize="15sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/txtSubtitle" />
+
     <LinearLayout
         android:id="@+id/btnHostPlate"
         android:layout_width="0dp"
         android:layout_height="104dp"
-        android:layout_marginTop="36dp"
+        android:layout_marginTop="24dp"
         android:background="@drawable/bg_plate_host"
         android:clickable="true"
         android:focusable="true"
@@ -58,7 +74,7 @@
         android:paddingHorizontal="20dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/txtSubtitle">
+        app:layout_constraintTop_toBottomOf="@id/txtRiderName">
 
         <TextView
             android:layout_width="wrap_content"

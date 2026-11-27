@@ -24,6 +24,9 @@ interface GroupMixing {
     /** The codec [rider] expects ([CodecId]). */
     fun codecFor(rider: Any): Byte
 
+    /** The Host muted [rider]: nobody hears it (hot path, playback thread). */
+    fun isMuted(rider: Any): Boolean = false
+
     /** Sends one encoded mix-minus frame to [rider] (hot path, playback thread; never blocks). */
     fun send(rider: Any, bytes: ByteArray, offset: Int, length: Int, codecId: Byte)
 }
@@ -122,6 +125,9 @@ class IntercomAudioEngine(
             }
         }
     }
+
+    /** While hosting: whether the Host and which riders spoke in the last ~300 ms. */
+    fun groupSpeaking(): Pair<Boolean, Set<Any>> = groupMixer.recentTalkers()
 
     fun resetJitterBuffer() {
         jitterBuffer.reset()
@@ -306,7 +312,7 @@ class IntercomAudioEngine(
                     val tickStart = System.nanoTime()
                     sharedOpusLen = NOT_ENCODED
                     sharedPcmLen = NOT_ENCODED
-                    groupMixer.tick(mixing.riders(), rxPlayPcm) { rider, pcm, shared ->
+                    groupMixer.tick(mixing.riders(), rxPlayPcm, mixing::isMuted) { rider, pcm, shared ->
                         sendMix(mixing, rider, pcm, shared)
                     }
                     lastMixTickMicros = (System.nanoTime() - tickStart) / 1_000L

@@ -115,6 +115,39 @@ class GroupAudioMixerTest {
     }
 
     @Test
+    fun aHostMutedRiderIsHeardByNobody_butStillHearsTheGroup() {
+        talk("ana", 1000)
+        talk("ben", 2000)
+
+        val sent = HashMap<String, Int>()
+        repeat(5) {
+            mixer.submitHostMic(ShortArray(n) { 500 })
+            mixer.tick(listOf("ana", "ben"), hostOut, isMuted = { it == "ana" }) { r, pcm, _ -> sent[r] = pcm[0].toInt() }
+        }
+
+        assertEquals(2000, hostOut[0].toInt()) // the Host hears Ben only
+        assertEquals(2500, sent["ana"]) // Ana still hears Ben + Host
+        assertEquals(500, sent["ben"]) // Ben hears the Host, not Ana
+    }
+
+    @Test
+    fun recentTalkersHoldsASpeakerBriefly_includingMutedOnes() {
+        talk("ana", 1000, frames = 3)
+        mixer.submitHostMic(ShortArray(n) { 500 })
+        repeat(4) { mixer.tick(listOf("ana", "ben"), hostOut, isMuted = { it == "ana" }) { _, _, _ -> } }
+
+        val (host, riders) = mixer.recentTalkers()
+        assertTrue(host)
+        assertEquals(setOf("ana"), riders)
+
+        // The jitter buffer fades a talker out over a few frames (PLC); those still count as speaking.
+        repeat(GroupAudioMixer.SPEAKING_HOLD_TICKS + JitterBuffer.MAX_PLC_FADE_FRAMES + 2) {
+            mixer.tick(listOf("ana", "ben"), hostOut) { _, _, _ -> }
+        }
+        assertEquals(false to emptySet<String>(), mixer.recentTalkers())
+    }
+
+    @Test
     fun limiterKeepsQuietSamplesUntouched_andIsSymmetric() {
         assertEquals(1234, GroupAudioMixer.limit(1234).toInt())
         assertEquals(-1234, GroupAudioMixer.limit(-1234).toInt())

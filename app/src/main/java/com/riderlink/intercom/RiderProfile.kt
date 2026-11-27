@@ -16,6 +16,10 @@ class RiderProfile(context: Context) {
         get() = prefs.getString(KEY_NAME, null)?.takeIf { it.isNotBlank() } ?: defaultName()
         set(value) = prefs.edit().putString(KEY_NAME, value.trim()).apply()
 
+    /** False until the rider has saved a name of their own (the first-run prompt uses it). */
+    val hasChosenName: Boolean
+        get() = prefs.contains(KEY_NAME)
+
     val riderKey: Int
         get() {
             val existing = prefs.getInt(KEY_RIDER_KEY, 0)

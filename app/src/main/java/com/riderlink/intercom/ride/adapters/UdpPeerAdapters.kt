@@ -7,6 +7,7 @@ import com.riderlink.intercom.protocol.ControlCode
 import com.riderlink.intercom.protocol.JoinAck
 import com.riderlink.intercom.protocol.JoinRequest
 import com.riderlink.intercom.protocol.PacketHeader
+import com.riderlink.intercom.protocol.RosterSync
 import com.riderlink.intercom.protocol.SenderId
 import com.riderlink.intercom.ride.BoundNetwork
 import com.riderlink.intercom.ride.HostDialer
@@ -78,10 +79,24 @@ private class UdpPeerLink(private val io: Executor) : PeerLink {
             offset: Int,
             length: Int
         ) {
-            if (controlCode != ControlCode.JOIN_ACK) return onControlPacket(header, controlCode)
+            when (controlCode) {
+                ControlCode.JOIN_ACK -> Unit
+                ControlCode.ROSTER_SYNC -> {
+                    val roster = RosterSync.decode(payload, offset, length) ?: return
+                    events.onRoster(this@UdpPeerLink, roster, transport.senderId.toInt() and 0xFF)
+                    return
+                }
+                ControlCode.HOST_KICK_PEER -> {
+                    events.onRemoved(this@UdpPeerLink)
+                    return
+                }
+                else -> return onControlPacket(header, controlCode)
+            }
             val ack = JoinAck.decode(payload, offset, length) ?: return
             if (!joinAcked.compareAndSet(false, true)) return
-            if (ack.isRefused) {
+            if (ack.wasRemoved) {
+                events.onRejected(this@UdpPeerLink, "The rider removed you from this ride.")
+            } else if (ack.isRefused) {
                 events.onRejected(this@UdpPeerLink, "The group is full. Ask the rider to remove someone, then try again.")
             } else {
                 transport.senderId = ack.assignedSenderId.toByte()

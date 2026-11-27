@@ -18,6 +18,11 @@ All notable changes to **RiderLink** are documented here.
   - Each Peer offers Opus in `JOIN_REQ` and the Host agrees in `JOIN_ACK`; Safari and v0.1.x riders stay on PCM.
   - The Host encodes the mix for everyone who isn't talking once, and gives each talker their own.
   - The diagnostics drawer shows how long the Host's mix takes per 20 ms frame.
+- **Rider names and the live group roster (Phase 2 M1, part 3):**
+  - Riders pick a name the first time they ride; it's editable from Home ("Riding as … · Edit").
+  - The ride screen lists everyone in the group with speaking, reconnecting, on-call and muted badges, the same on every phone.
+  - The Host can tap a rider to **mute** them (nobody hears them, they still hear the group) or **remove** them (their ride ends and they can't rejoin until the Host ends the ride).
+  - With more than 5 Android riders, the Host sees a "Wi-Fi may get crowded" note.
 - **Riders on v0.1.x still work:**
   - On a new Host, they join as Legacy Peers named "Rider".
   - A new Peer still joins an old Host as before.

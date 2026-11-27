@@ -7,6 +7,8 @@ import com.riderlink.intercom.protocol.ControlCode
 import com.riderlink.intercom.protocol.JoinAck
 import com.riderlink.intercom.protocol.JoinRequest
 import com.riderlink.intercom.protocol.PacketHeader
+import com.riderlink.intercom.protocol.RosterEntry
+import com.riderlink.intercom.protocol.RosterSync
 import com.riderlink.intercom.protocol.SenderId
 import com.riderlink.intercom.ride.LinkEvents
 import com.riderlink.intercom.ride.PeerControl
@@ -137,6 +139,42 @@ class UdpGroupGatewayTest {
     }
 
     @Test
+    fun theRosterReachesTheRider_andMembersCarryTheirNameAndId() {
+        val port = open()
+        val a = peer(port).also { it.join("Ana", key = 1) }
+        eventually { events.linked.size == 1 && a.ack != null }
+        val link = events.linked.single()
+        assertEquals("Ana", link.riderName)
+        assertEquals(a.ack!!.assignedSenderId, link.riderId)
+
+        link.sendRoster(RosterSync(5, listOf(RosterEntry(0, "Kenneth", RosterEntry.HOST), RosterEntry(1, "Ana", RosterEntry.CONNECTED))))
+
+        eventually { a.rosters.isNotEmpty() }
+        assertEquals(listOf("Kenneth", "Ana"), a.rosters.single().entries.map { it.name })
+    }
+
+    @Test
+    fun aRemovedRiderIsTold_andCannotRejoinThisRide() {
+        val port = open()
+        val a = peer(port).also { it.join("Ana", key = 9) }
+        eventually { events.linked.size == 1 && a.ack != null }
+
+        events.linked.single().remove()
+
+        eventually { a.kicked }
+        assertEquals(0, gateway.memberCount())
+
+        a.ack = null
+        a.udp.sendAudio(ByteArray(640), 0, 640) // its old address is ignored
+        val again = peer(port).also { it.join("Ana", key = 9) } // and so is its rider key
+        eventually { again.ack != null }
+        assertTrue(again.ack!!.wasRemoved)
+        Thread.sleep(200)
+        assertEquals(0, gateway.memberCount())
+        assertEquals(1, events.linked.size)
+    }
+
+    @Test
     fun aFullGroupRefusesTheNextRider() {
         val small = UdpGroupGateway(io = { it.run() }, port = 0, maxPeers = 1)
         try {
@@ -159,6 +197,10 @@ class UdpGroupGatewayTest {
         @Volatile
         var ack: JoinAck? = null
         val audio = CopyOnWriteArrayList<ByteArray>()
+        val rosters = CopyOnWriteArrayList<RosterSync>()
+
+        @Volatile
+        var kicked = false
 
         val udp = UdpAudioTransport(
             senderId = SenderId.OBR,
@@ -171,7 +213,11 @@ class UdpGroupGatewayTest {
                 override fun onControlPacket(header: PacketHeader, controlCode: Byte) {}
 
                 override fun onControlPacket(header: PacketHeader, controlCode: Byte, payload: ByteArray, offset: Int, length: Int) {
-                    if (controlCode == ControlCode.JOIN_ACK) ack = JoinAck.decode(payload, offset, length)
+                    when (controlCode) {
+                        ControlCode.JOIN_ACK -> ack = JoinAck.decode(payload, offset, length)
+                        ControlCode.ROSTER_SYNC -> RosterSync.decode(payload, offset, length)?.let { rosters += it }
+                        ControlCode.HOST_KICK_PEER -> kicked = true
+                    }
                 }
 
                 override fun onLinkStateChanged(state: LinkState) {}

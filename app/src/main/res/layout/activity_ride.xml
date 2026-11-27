@@ -109,6 +109,32 @@
             android:textSize="14sp"
             android:visibility="gone" />
 
+        <!-- GROUP ROSTER (Phase 2 M1): who's in the ride and what each rider is doing -->
+        <LinearLayout
+            android:id="@+id/panelRoster"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@color/panel_asphalt"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/txtRosterTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/roster_title"
+                android:textColor="@color/ink_slate"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:id="@+id/rosterList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
+
         <!-- CENTER SIGNATURE COCKPIT SWITCH -->
         <LinearLayout
             android:id="@+id/btnCockpitCenter"

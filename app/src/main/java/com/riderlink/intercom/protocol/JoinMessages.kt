@@ -76,12 +76,17 @@ data class JoinAck(
     val codecId: Byte,
     val rosterVersion: Int
 ) {
-    val isRefused: Boolean get() = assignedSenderId == GROUP_FULL
+    val isRefused: Boolean get() = assignedSenderId == GROUP_FULL || assignedSenderId == REMOVED
+
+    val wasRemoved: Boolean get() = assignedSenderId == REMOVED
 
     fun encode(): ByteArray = byteArrayOf(assignedSenderId.toByte(), codecId, rosterVersion.toByte())
 
     companion object {
         const val GROUP_FULL: Int = 0
+
+        /** The Host removed this rider earlier in the ride; it can't rejoin until the ride ends. */
+        const val REMOVED: Int = 0xFF
 
         fun decode(bytes: ByteArray, offset: Int, length: Int): JoinAck? {
             if (length < 3) return null

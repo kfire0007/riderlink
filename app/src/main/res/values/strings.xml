@@ -83,4 +83,22 @@
     <string name="notif_action_mute">Mute</string>
     <string name="notif_action_unmute">Unmute</string>
     <string name="notif_action_stop">End ride</string>
+    <!-- Phase 2 M1: rider name and group roster -->
+    <string name="rider_name_label">Riding as %1$s · Edit</string>
+    <string name="rider_name_dialog_title">Your rider name</string>
+    <string name="rider_name_dialog_message">Shown to everyone else in the group.</string>
+    <string name="rider_name_save">Save</string>
+    <string name="roster_title">Group</string>
+    <string name="roster_you">%1$s (you)</string>
+    <string name="roster_host">%1$s (rider)</string>
+    <string name="roster_speaking">speaking</string>
+    <string name="roster_reconnecting">reconnecting</string>
+    <string name="roster_on_call">on a call</string>
+    <string name="roster_muted">muted by rider</string>
+    <string name="roster_action_mute">Mute %1$s</string>
+    <string name="roster_action_unmute">Unmute %1$s</string>
+    <string name="roster_action_remove">Remove %1$s from the ride</string>
+    <string name="warn_you_are_host_muted">The rider muted you, so the group cannot hear you.</string>
+    <string name="warn_group_crowded">%1$d phones on one Wi-Fi: it may get crowded.</string>
+    <string name="toast_removed_by_host">The rider removed you from the group.</string>
 </resources>

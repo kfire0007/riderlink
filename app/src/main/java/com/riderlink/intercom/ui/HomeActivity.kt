@@ -2,10 +2,14 @@ package com.riderlink.intercom.ui
 
 import android.content.Intent
 import android.os.Bundle
+import android.text.InputFilter
+import android.widget.EditText
+import android.widget.FrameLayout
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.riderlink.intercom.R
+import com.riderlink.intercom.RiderLinkApp
 import com.riderlink.intercom.databinding.ActivityHomeBinding
 import com.riderlink.intercom.ride.RideRole
 import com.riderlink.intercom.oem.BatteryOptimizationHelper
@@ -13,6 +17,7 @@ import com.riderlink.intercom.oem.BatteryOptimizationHelper
 class HomeActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityHomeBinding
+    private val profile by lazy { RiderLinkApp.from(this).profile }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -21,11 +26,12 @@ class HomeActivity : AppCompatActivity() {
         binding.root.applySystemBarInsets()
 
         binding.btnHostPlate.setOnClickListener {
-            openPairScreen(RideRole.HOST)
+            withRiderName { openPairScreen(RideRole.HOST) }
         }
         binding.btnJoinPlate.setOnClickListener {
-            openPairScreen(RideRole.PEER)
+            withRiderName { openPairScreen(RideRole.PEER) }
         }
+        binding.txtRiderName.setOnClickListener { askRiderName(then = null) }
         binding.barBatteryReadiness.setOnClickListener {
             showBatteryChecklistDialog()
         }
@@ -34,6 +40,41 @@ class HomeActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshBatteryBanner()
+        renderRiderName()
+    }
+
+    private fun renderRiderName() {
+        binding.txtRiderName.text = getString(R.string.rider_name_label, profile.displayName)
+    }
+
+    /** Asks for a Rider name once, the first time a rider picks a role; then carries on. */
+    private fun withRiderName(then: () -> Unit) {
+        if (profile.hasChosenName) then() else askRiderName(then)
+    }
+
+    private fun askRiderName(then: (() -> Unit)?) {
+        val input = EditText(this).apply {
+            setText(profile.displayName)
+            setSelection(text.length)
+            isSingleLine = true
+            filters = arrayOf(InputFilter.LengthFilter(MAX_NAME_CHARS))
+        }
+        val padding = (20 * resources.displayMetrics.density).toInt()
+        val container = FrameLayout(this).apply {
+            setPadding(padding, padding / 2, padding, 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.rider_name_dialog_title)
+            .setMessage(R.string.rider_name_dialog_message)
+            .setView(container)
+            .setPositiveButton(R.string.rider_name_save) { _, _ ->
+                profile.displayName = input.text.toString().trim().ifBlank { profile.displayName }
+                renderRiderName()
+                then?.invoke()
+            }
+            .setNegativeButton(R.string.close_label, null)
+            .show()
     }
 
     private fun openPairScreen(role: RideRole) {
@@ -85,5 +126,9 @@ class HomeActivity : AppCompatActivity() {
             }
             .setNegativeButton(R.string.close_label, null)
             .show()
+    }
+
+    private companion object {
+        const val MAX_NAME_CHARS = 24
     }
 }

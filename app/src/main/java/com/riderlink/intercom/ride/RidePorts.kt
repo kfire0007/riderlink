@@ -1,6 +1,7 @@
 package com.riderlink.intercom.ride
 
 import com.riderlink.intercom.protocol.CodecId
+import com.riderlink.intercom.protocol.RosterSync
 
 /*
  * The seams the Ride talks through. Each has an Android adapter (ride/android/) and a fake
@@ -101,6 +102,18 @@ interface PeerLink {
 
     /** The voice codec this link sends and expects ([CodecId]); PCM16 until a Host agrees on Opus. */
     val codecId: Byte get() = CodecId.PCM16_16K
+
+    /** Host side: the rider's group id (1..9 Android, [SAFARI_RIDER_ID] Safari); -1 if unknown. */
+    val riderId: Int get() = -1
+
+    /** Host side: the Rider name this rider introduced itself with; blank if unknown. */
+    val riderName: String get() = ""
+
+    /** Host side: send this rider the group roster (non-blocking). */
+    fun sendRoster(roster: RosterSync) {}
+
+    /** Host side: tell this rider it was removed, and keep it out until the ride ends. */
+    fun remove() {}
     fun sendVoice(bytes: ByteArray, offset: Int, length: Int)
     fun sendControl(control: PeerControl)
     fun sayGoodbye()
@@ -119,6 +132,12 @@ interface LinkEvents {
 
     /** The Host refused this Peer (e.g. the group is full). Peer side only. */
     fun onRejected(link: PeerLink, reason: String) {}
+
+    /** Peer side: the Host's roster; [yourId] is this phone's own rider id in it. */
+    fun onRoster(link: PeerLink, roster: RosterSync, yourId: Int) {}
+
+    /** Peer side: the Host removed this phone from the ride. */
+    fun onRemoved(link: PeerLink) {}
 }
 
 /**
@@ -144,3 +163,6 @@ interface HostDialer {
 fun interface VoiceReceiver {
     fun onVoice(link: PeerLink, codecId: Byte, sequence: Long, bytes: ByteArray, offset: Int, length: Int)
 }
+
+/** The Safari peer's fixed rider id in a group roster (after the Android ids 1..9). */
+const val SAFARI_RIDER_ID = 10

@@ -60,6 +60,14 @@ _Avoid_: Mix (alone), conference audio
 The name a **Rider** chose for themselves, shown to the rest of the group.
 _Avoid_: Username, nickname, display name
 
+**Roster**:
+The list of every **Rider** in a group **Ride** and what each is doing: speaking, reconnecting, on a call, or muted by the **Host**. The **Host** keeps it and shares it with every **Peer**.
+_Avoid_: Member list, participants
+
+**Host mute**:
+The **Host** stops relaying one **Rider**'s voice to the group. That **Rider** still hears everyone.
+_Avoid_: Mute (alone, which is a **Rider** muting their own mic)
+
 **Legacy Peer**:
 A **Peer** still on the Phase 1 app. It joins a group **Ride** without introducing itself, and is shown simply as "Rider".
 _Avoid_: Old client, v1 peer
