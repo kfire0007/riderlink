@@ -2,8 +2,8 @@
 
 All notable changes to **RiderLink** are documented here.
 
-## [Unreleased]
-### Added (Phase 2 M1, part 1: group voice)
+## [0.2.0] - 2026-11-28
+### Added (Phase 2 Milestone 1: group intercom)
 - **Group rides:**
   - A Host now takes up to 9 Android Peers plus the iPhone Safari peer.
   - Each Peer introduces itself with `JOIN_REQ` (rider name, rider key) and gets its own sender id in `JOIN_ACK`.

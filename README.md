@@ -16,8 +16,10 @@
 
 ---
 
-## Current Features (`v0.1.7`)
+## Current Features (`v0.2.0`)
 
+- **Group Rides (new in v0.2.0):** One rider hosts; up to 9 Android passengers plus an iPhone Safari passenger join. Everyone hears everyone except themselves (Host-mixed *mix-minus*), in **Opus** (about 15× less Wi-Fi airtime than v0.1). Riders on v0.1.x can still join.
+- **Rider Names & Live Group Roster (new in v0.2.0):** Pick a rider name once; the ride screen lists everyone with *speaking*, *reconnecting*, *on a call* and *muted* badges, the same on every phone. The host can **mute** or **remove** a rider.
 - **1-Scan Offline QR Pairing:** Rider creates a private local Wi-Fi link; passenger scans the QR code offline (with automatic 1st-attempt retry and 1-tap Wi-Fi Settings fallback).
 - **Manual Wi-Fi / Hotspot Fallback:** Works on any phone hotspot or shared local Wi-Fi using Host IP, Port, and a 4-digit session code.
 - **Hands-Free + Adjustable Wind Gate + Push-to-Talk (PTT):** Full-duplex open mic by default with one-tap Mute, adjustable RMS wind gate slider, or hold-to-talk PTT (screen button, Volume Down, or headset media button).
@@ -66,7 +68,7 @@ Brief dropouts auto-recover silently once back in range without re-scanning QR c
 ## Roadmap (Phase 2)
 
 See [docs/spec-phase2.md](docs/spec-phase2.md) and [docs/intent/phase2-group-intercom.md](docs/intent/phase2-group-intercom.md):
-- **`v0.2.0` — 6–10 Rider Group Intercom + Opus + Live Roster:** Host-mixed Star (mix-minus) for 3–5 scooters (up to 2 riders per scooter), Opus compression (FEC/PLC, 5×–10× lower Wi-Fi airtime), Rider Display Names, live Group Roster, Host mute/kick, and iPhone Safari peer slot.
+- **`v0.2.0` — 6–10 Rider Group Intercom + Opus + Live Roster:** ✅ Released. Host-mixed star (mix-minus), Opus, rider names, live roster, Host mute/remove, iPhone Safari slot. (Opus FEC recovery on decode is still to come.)
 - **`v0.3.0` — Hands-Free Self-Healing Network:** Exact-BSSID + `CompanionDeviceManager` zero-tap silent auto-rejoin when separated scooters catch back up, plus Bluetooth-earbud-safe Backup Host failover.
 - **`v0.4.0` — Group Music Sharing:** Host offline MP3 playback (plus optional experimental Spotify/YouTube Music `AudioPlaybackCapture`), automatic voice ducking (~20%), and per-rider local Music Mute & Volume slider.
 
