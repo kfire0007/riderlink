@@ -13,6 +13,11 @@ All notable changes to **RiderLink** are documented here.
 - **Mix-minus:**
   - The Host mixes its own mic with every rider and sends each rider everyone except themselves (`GroupAudioMixer`, with one jitter buffer per rider and a soft limiter when several riders talk at once).
   - Android and Safari riders now hear each other.
+- **Opus voice (Phase 2 M1, part 2):**
+  - Android riders now talk in Opus (24 kbps, ~44 bytes per 20 ms frame instead of 640). That's about 15x less Wi-Fi airtime per rider.
+  - Each Peer offers Opus in `JOIN_REQ` and the Host agrees in `JOIN_ACK`; Safari and v0.1.x riders stay on PCM.
+  - The Host encodes the mix for everyone who isn't talking once, and gives each talker their own.
+  - The diagnostics drawer shows how long the Host's mix takes per 20 ms frame.
 - **Riders on v0.1.x still work:**
   - On a new Host, they join as Legacy Peers named "Rider".
   - A new Peer still joins an old Host as before.

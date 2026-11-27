@@ -26,7 +26,8 @@ class RiderProfile(context: Context) {
             return key
         }
 
-    fun joinRequest(): JoinRequest = JoinRequest(displayName, JoinRequest.FLAG_ANDROID, riderKey)
+    fun joinRequest(): JoinRequest =
+        JoinRequest(displayName, JoinRequest.FLAG_ANDROID or JoinRequest.FLAG_OPUS, riderKey)
 
     private fun defaultName(): String = Build.MODEL?.takeIf { it.isNotBlank() } ?: "Rider"
 

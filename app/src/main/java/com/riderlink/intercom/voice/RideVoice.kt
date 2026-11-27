@@ -4,6 +4,7 @@ import android.content.Context
 import com.riderlink.intercom.audio.ChimeType
 import com.riderlink.intercom.audio.GroupMixing
 import com.riderlink.intercom.audio.IntercomAudioEngine
+import com.riderlink.intercom.protocol.CodecId
 import com.riderlink.intercom.ride.PeerLink
 import com.riderlink.intercom.ride.Ride
 import com.riderlink.intercom.ride.RideOutcome
@@ -42,6 +43,8 @@ class RideVoice(
     val talkControlState: StateFlow<TalkControlState> = talk.state
 
     private val engine = IntercomAudioEngine(
+        // A Peer has one Link, to its Host; send the mic in whatever codec that Link agreed.
+        txCodecId = { ride.voiceTargets.firstOrNull()?.codecId ?: CodecId.PCM16_16K },
         shouldTransmit = { talk.shouldTransmitMic() },
         isBypassNoiseGate = {
             val s = talk.state.value
@@ -53,6 +56,8 @@ class RideVoice(
     /** While hosting, the engine mixes for every link the Ride currently has. */
     private val hostMixing = object : GroupMixing {
         override fun riders(): List<Any> = ride.voiceTargets
+
+        override fun codecFor(rider: Any): Byte = (rider as PeerLink).codecId
 
         override fun send(rider: Any, bytes: ByteArray, offset: Int, length: Int, codecId: Byte) {
             ride.sendVoiceTo(rider as PeerLink, bytes, offset, length)
@@ -83,13 +88,17 @@ class RideVoice(
     val jitterDepthFrames: Int
         get() = engine.jitterBuffer.currentDepthFrames
 
+    /** While hosting: how long the last 20 ms mix tick took (mixing + encoding), in microseconds. */
+    val mixTickMicros: Long
+        get() = engine.lastMixTickMicros
+
     init {
         scope.launch { ride.state.collect { onRideState(it) } }
     }
 
     /** Hot path from the Ride: one incoming voice frame. */
-    fun onVoice(link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
-        engine.onIncomingAudio(link, sequence, bytes, offset, length)
+    fun onVoice(link: PeerLink, codecId: Byte, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
+        engine.onIncomingAudio(link, codecId, sequence, bytes, offset, length)
     }
 
     // --- Talk controls ---------------------------------------------------------------------

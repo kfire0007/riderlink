@@ -2,9 +2,11 @@ package com.riderlink.intercom
 
 import android.app.Application
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.Intent
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.riderlink.intercom.audio.OpusSelfCheck
 import com.riderlink.intercom.ride.Ride
 import com.riderlink.intercom.ride.adapters.AndroidHotspotFormer
 import com.riderlink.intercom.ride.adapters.AndroidSharedWifi
@@ -61,14 +63,29 @@ class RiderLinkApp : Application() {
                 log = { Log.w(TAG, it) }
             ),
             hostDialer = UdpHostDialer(io, identity = { profile.joinRequest() }),
-            voiceReceiver = { link, sequence, bytes, offset, length ->
-                voice.onVoice(link, sequence, bytes, offset, length)
+            voiceReceiver = { link, codecId, sequence, bytes, offset, length ->
+                voice.onVoice(link, codecId, sequence, bytes, offset, length)
             },
             log = { Log.i(TAG, it) }
         )
         voice = RideVoice(this, ride, appScope)
         locks = SessionLockManager(this)
         keepForegroundWhileRiding()
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) logOpusCost()
+    }
+
+    /** Debug builds: time Opus on this phone once, off the main thread, for field checks. */
+    private fun logOpusCost() {
+        Thread({
+            val r = OpusSelfCheck.run()
+            Log.i(TAG, "Opus on this device: encode ${"%.0f".format(r.encodeMicros)} us, " +
+                "decode ${"%.0f".format(r.decodeMicros)} us, ${r.averageBytes} B/frame; " +
+                "~${r.encodesPerFrameBudget()} encodes fit in half a 20 ms frame")
+        }, "RiderLink-OpusCheck").apply {
+            priority = Thread.MIN_PRIORITY
+            isDaemon = true
+            start()
+        }
     }
 
     /** Starts the foreground service whenever a ride leaves Idle; the service stops itself at Idle. */

@@ -2,6 +2,7 @@ package com.riderlink.intercom.ride.adapters
 
 import com.riderlink.intercom.network.LinkState
 import com.riderlink.intercom.network.UdpAudioTransport
+import com.riderlink.intercom.protocol.CodecId
 import com.riderlink.intercom.protocol.ControlCode
 import com.riderlink.intercom.protocol.JoinAck
 import com.riderlink.intercom.protocol.JoinRequest
@@ -34,8 +35,12 @@ private class UdpPeerLink(private val io: Executor) : PeerLink {
 
     override val kind = LinkKind.ANDROID
 
+    /** PCM16 until a Phase 2 Host agrees on Opus in JOIN_ACK. */
+    @Volatile
+    override var codecId: Byte = CodecId.PCM16_16K
+
     override fun sendVoice(bytes: ByteArray, offset: Int, length: Int) {
-        transport.sendAudio(bytes, offset, length)
+        transport.sendAudio(bytes, offset, length, codecId)
     }
 
     override fun sendControl(control: PeerControl) {
@@ -63,7 +68,7 @@ private class UdpPeerLink(private val io: Executor) : PeerLink {
 
     fun listener(events: LinkEvents) = object : UdpAudioTransport.Listener {
         override fun onAudioPacket(header: PacketHeader, payload: ByteArray, offset: Int, length: Int) {
-            events.onVoice(this@UdpPeerLink, header.sequenceNumber, payload, offset, length)
+            events.onVoice(this@UdpPeerLink, header.codecId, header.sequenceNumber, payload, offset, length)
         }
 
         override fun onControlPacket(
@@ -80,6 +85,7 @@ private class UdpPeerLink(private val io: Executor) : PeerLink {
                 events.onRejected(this@UdpPeerLink, "The group is full. Ask the rider to remove someone, then try again.")
             } else {
                 transport.senderId = ack.assignedSenderId.toByte()
+                if (ack.codecId == CodecId.OPUS) codecId = CodecId.OPUS
             }
         }
 

@@ -10,6 +10,8 @@ import kotlin.math.exp
  *  - what the Host hears: every rider, not itself;
  *  - for each rider, that rider's mix-minus: the Host's mic plus every other rider.
  * A rider whose mix-minus is silence gets no frame, so idle groups send nothing.
+ * Riders who aren't talking all get the same mix; [tick] flags it as shared so a caller can
+ * encode it once for all of them.
  *
  * Threads: [onIncoming] from link receive threads, [submitHostMic] from the capture thread, and
  * [tick] / [reset] from the playback thread. [tick] allocates only when a new rider appears.
@@ -57,9 +59,11 @@ class GroupAudioMixer<K : Any>(
     /**
      * Mixes one 20 ms frame for [riders]. Writes what the Host hears into [hostOut] and calls [send]
      * once per rider whose mix-minus has audio. Returns true if [hostOut] has audio.
-     * The array passed to [send] is reused: copy or encode it before returning.
+     * The array passed to [send] is reused: copy or encode it before returning. `shared` is true
+     * when it's the plain group mix (the rider isn't talking), identical for every such rider
+     * in this tick.
      */
-    fun tick(riders: List<K>, hostOut: ShortArray, send: (K, ShortArray) -> Unit): Boolean {
+    fun tick(riders: List<K>, hostOut: ShortArray, send: (rider: K, pcm: ShortArray, shared: Boolean) -> Unit): Boolean {
         dropRidersNotIn(riders)
 
         val micTalking = synchronized(micLock) {
@@ -100,7 +104,7 @@ class GroupAudioMixer<K : Any>(
             for (i in 0 until frameSamples) {
                 out[i] = limit(if (own) total[i] - frame[i] else total[i])
             }
-            send(rider, out)
+            send(rider, out, !own)
         }
         return ridersTalking > 0
     }

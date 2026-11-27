@@ -139,7 +139,7 @@ class FakeGateway(
     fun reconnecting() = events!!.onReconnecting(link)
     fun goodbye() = events!!.onGoodbye(link)
     fun control(c: PeerControl) = events!!.onControl(link, c)
-    fun voice(seq: Long, bytes: ByteArray) = events!!.onVoice(link, seq, bytes, 0, bytes.size)
+    fun voice(seq: Long, bytes: ByteArray) = events!!.onVoice(link, link.codecId, seq, bytes, 0, bytes.size)
 }
 
 class FakeDialer : HostDialer {
@@ -181,7 +181,7 @@ class RecordingVoiceReceiver : VoiceReceiver {
 
     val frames = mutableListOf<Frame>()
 
-    override fun onVoice(link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
+    override fun onVoice(link: PeerLink, codecId: Byte, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
         frames += Frame(link, sequence, bytes.copyOfRange(offset, offset + length).toList())
     }
 }

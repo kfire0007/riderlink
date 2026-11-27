@@ -1,5 +1,6 @@
 package com.riderlink.intercom.ride.adapters
 
+import com.riderlink.intercom.protocol.CodecId
 import com.riderlink.intercom.ride.LinkEvents
 import com.riderlink.intercom.ride.LinkKind
 import com.riderlink.intercom.ride.LinkStats
@@ -92,7 +93,7 @@ class SafariPeerGateway(
             override fun onAudioFrame(pcmBytes: ByteArray, offset: Int, length: Int) {
                 val s = session ?: return
                 s.received.incrementAndGet()
-                s.events.onVoice(s, s.sequence.incrementAndGet(), pcmBytes, offset, length)
+                s.events.onVoice(s, CodecId.PCM16_16K, s.sequence.incrementAndGet(), pcmBytes, offset, length)
             }
 
             override fun onHeartbeat(rttMs: Long?) {

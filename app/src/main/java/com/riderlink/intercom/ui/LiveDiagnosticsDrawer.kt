@@ -21,7 +21,9 @@ class LiveDiagnosticsDrawer(
         val wakeLockHeld: Boolean,
         val wifiLockHeld: Boolean,
         val batteryExempt: Boolean,
-        val jitterDepthFrames: Int
+        val jitterDepthFrames: Int,
+        /** Host only: cost of the last mix tick; 0 on a Peer. */
+        val mixTickMicros: Long = 0L
     )
 
     fun render(ride: RideState, stats: RideStats, route: AudioRouteState, device: DeviceStatus) {
@@ -46,7 +48,11 @@ class LiveDiagnosticsDrawer(
         }.ifEmpty { "no peers" }
         binding.txtDiagTransport.text = "$networkLabel ($linkLabels)"
 
-        binding.txtDiagJitter.text = "${device.jitterDepthFrames} frames"
+        binding.txtDiagJitter.text = if (device.mixTickMicros > 0) {
+            String.format(Locale.US, "Mixing %.1f ms / 20 ms", device.mixTickMicros / 1000.0)
+        } else {
+            "${device.jitterDepthFrames} frames"
+        }
 
         val wake = if (device.wakeLockHeld) "On" else "Off"
         val wifi = if (device.wifiLockHeld) "On" else "Off"

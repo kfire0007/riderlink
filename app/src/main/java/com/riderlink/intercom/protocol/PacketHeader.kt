@@ -7,7 +7,7 @@ package com.riderlink.intercom.protocol
  *  0..1  magic (0x524C = "RL")
  *  2     version (1)
  *  3     packetType (AUDIO, PING, PONG, CONTROL)
- *  4     codecId (PCM16_16K, OPUS_RESERVED)
+ *  4     codecId (PCM16_16K, OPUS)
  *  5     senderId (0 = Host/Rider, 1 = OBR, 2..N = Phase 2 peers)
  *  6..7  sessionToken (uint16)
  *  8..11 sequenceNumber (uint32)
@@ -37,7 +37,8 @@ object ControlCode {
 
 object CodecId {
     const val PCM16_16K: Byte = 0x01
-    const val OPUS_RESERVED: Byte = 0x02
+    /** Opus, 16 kHz mono, 20 ms frames (Phase 2). */
+    const val OPUS: Byte = 0x02
 }
 
 object SenderId {

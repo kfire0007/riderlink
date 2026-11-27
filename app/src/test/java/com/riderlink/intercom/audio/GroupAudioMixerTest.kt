@@ -25,7 +25,7 @@ class GroupAudioMixerTest {
         repeat(5) {
             mic?.let { mixer.submitHostMic(ShortArray(n) { _ -> it.toShort() }) }
             val sent = HashMap<String, Int>()
-            mixer.tick(riders, hostOut) { rider, pcm -> sent[rider] = pcm[0].toInt() }
+            mixer.tick(riders, hostOut) { rider, pcm, _ -> sent[rider] = pcm[0].toInt() }
             if (sent.isNotEmpty() || hostOut[0] != 0.toShort()) return sent
         }
         return emptyMap()
@@ -57,7 +57,7 @@ class GroupAudioMixerTest {
     fun onlyTheHostTalking_reachesEveryRider_andTheHostHearsNothing() {
         val sent = HashMap<String, Int>()
         mixer.submitHostMic(ShortArray(n) { 700 })
-        val hostHasAudio = mixer.tick(listOf("ana", "ben"), hostOut) { r, pcm -> sent[r] = pcm[0].toInt() }
+        val hostHasAudio = mixer.tick(listOf("ana", "ben"), hostOut) { r, pcm, _ -> sent[r] = pcm[0].toInt() }
 
         assertFalse(hostHasAudio)
         assertEquals(mapOf("ana" to 700, "ben" to 700), sent)
@@ -67,7 +67,7 @@ class GroupAudioMixerTest {
     @Test
     fun aQuietGroupSendsNothing() {
         var sends = 0
-        mixer.tick(listOf("ana", "ben"), hostOut) { _, _ -> sends++ }
+        mixer.tick(listOf("ana", "ben"), hostOut) { _, _, _ -> sends++ }
         assertEquals(0, sends)
     }
 
@@ -75,8 +75,8 @@ class GroupAudioMixerTest {
     fun aMicFrameIsUsedOnce() {
         mixer.submitHostMic(ShortArray(n) { 700 })
         var sends = 0
-        mixer.tick(listOf("ana"), hostOut) { _, _ -> sends++ }
-        mixer.tick(listOf("ana"), hostOut) { _, _ -> sends++ }
+        mixer.tick(listOf("ana"), hostOut) { _, _, _ -> sends++ }
+        mixer.tick(listOf("ana"), hostOut) { _, _, _ -> sends++ }
         assertEquals(1, sends)
     }
 
@@ -99,6 +99,19 @@ class GroupAudioMixerTest {
         tickUntilAudio(listOf("ben"))
 
         assertEquals(2000, hostOut[0].toInt())
+    }
+
+    @Test
+    fun listenersShareOneMix_andATalkerGetsItsOwn() {
+        talk("ana", 1000)
+
+        val shared = HashMap<String, Boolean>()
+        repeat(5) {
+            mixer.submitHostMic(ShortArray(n) { 500 })
+            mixer.tick(listOf("ana", "ben", "cai"), hostOut) { r, _, isShared -> shared[r] = isShared }
+        }
+
+        assertEquals(mapOf("ana" to false, "ben" to true, "cai" to true), shared)
     }
 
     @Test

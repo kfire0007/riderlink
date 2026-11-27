@@ -55,6 +55,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // Opus voice codec, pure Java (no NDK). Phase 2 M1, see docs/adr/0002.
+    implementation("io.github.jaredmdobson:concentus:1.0.2")
 
     testImplementation("junit:junit:4.13.2")
 }

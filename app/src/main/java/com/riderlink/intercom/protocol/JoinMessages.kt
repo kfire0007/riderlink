@@ -30,6 +30,9 @@ data class JoinRequest(
 
     companion object {
         const val FLAG_ANDROID: Int = 0x01
+
+        /** The Peer can send and play Opus (Phase 2 M1). */
+        const val FLAG_OPUS: Int = 0x02
         const val MAX_NAME_BYTES: Int = 32
 
         fun decode(bytes: ByteArray, offset: Int, length: Int): JoinRequest? {
