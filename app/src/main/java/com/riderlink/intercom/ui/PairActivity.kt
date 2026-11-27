@@ -46,6 +46,7 @@ class PairActivity : AppCompatActivity() {
     private var iphoneStepSafari = false
     private var lastHostQrPayload: QrPayload? = null
     private var lastScannedQr: QrPayload? = null
+    private var pendingJoinQr: QrPayload? = null
 
     private var service: IntercomForegroundService? = null
     private var bound = false
@@ -84,7 +85,13 @@ class PairActivity : AppCompatActivity() {
             service = s
             bound = true
             observeServiceState(s)
-            updatePreFlightAndStartIfReady()
+            val pending = pendingJoinQr
+            if (pending != null) {
+                pendingJoinQr = null
+                s.joinViaQr(pending)
+            } else {
+                updatePreFlightAndStartIfReady()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -108,6 +115,7 @@ class PairActivity : AppCompatActivity() {
         binding.btnTabIphone.visibility = if (role == Role.HOST_RIDER) View.VISIBLE else View.GONE
 
         binding.btnBack.setOnClickListener {
+            pendingJoinQr = null
             sessionStoppedByUser = true
             service?.stopSession()
             finish()
@@ -132,6 +140,7 @@ class PairActivity : AppCompatActivity() {
                     selectedMode = TransportMode.MANUAL_LAN
                 }
             }
+            pendingJoinQr = null
             hideError()
             renderRolePanels()
             if (bound) {
@@ -292,6 +301,8 @@ class PairActivity : AppCompatActivity() {
         }
         binding.txtHostSessionCode.text =
             "${getString(R.string.host_code_label)}: ${SessionToken.format(qr.sessionToken)}"
+        binding.txtHostHotspotNote.visibility =
+            if (selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT) View.VISIBLE else View.GONE
 
         val cached = qrBitmapCache[qrContent]
         if (cached != null) {
@@ -363,7 +374,13 @@ class PairActivity : AppCompatActivity() {
 
     private fun ensureServiceStartedAndJoinQr(qrPayload: QrPayload) {
         ensureServiceStarted()
-        service?.joinViaQr(qrPayload)
+        val s = service
+        if (s != null) {
+            pendingJoinQr = null
+            s.joinViaQr(qrPayload)
+        } else {
+            pendingJoinQr = qrPayload
+        }
     }
 
     private fun launchQrScanner() {
@@ -390,7 +407,9 @@ class PairActivity : AppCompatActivity() {
                             renderHostQr()
                         }
                         is ConnectionState.JoiningWifi -> {
-                            binding.txtJoinStatus.setText(R.string.join_connecting_wifi)
+                            binding.txtJoinStatus.setText(
+                                if (state.attempt > 1) R.string.join_retrying_wifi else R.string.join_connecting_wifi
+                            )
                         }
                         is ConnectionState.ConnectingUdp -> {
                             binding.txtJoinStatus.setText(R.string.join_connecting_udp)

@@ -170,6 +170,17 @@
                 android:textColor="@color/live_emerald"
                 android:textSize="16sp" />
 
+            <TextView
+                android:id="@+id/txtHostHotspotNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center"
+                android:text="@string/host_private_hotspot_note"
+                android:textColor="@color/ink_slate"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:id="@+id/panelHostManualInfo"
                 android:layout_width="match_parent"

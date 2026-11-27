@@ -36,7 +36,8 @@ class LocalHotspotHost(
     @SuppressLint("MissingPermission")
     fun start(
         onStarted: (HotspotCredentials) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        onStoppedUnexpectedly: (() -> Unit)? = null
     ) {
         stop()
         val preExistingIps = NetworkAddressResolver.listFilteredInterfaceIpv4s().map { it.second }.toSet()
@@ -47,6 +48,7 @@ class LocalHotspotHost(
                     override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
                         resolveJob?.cancel()
                         reservation = res
+                        val startedAtMs = System.nanoTime() / 1_000_000L
                         val (ssid, pass) = extractCredentials(res)
                         if (ssid.isNullOrEmpty() || pass.isNullOrEmpty()) {
                             stop()
@@ -55,6 +57,12 @@ class LocalHotspotHost(
                         }
                         resolveJob = scope.launch(Dispatchers.IO) {
                             val hostIp = resolveHotspotIpWithRetries(preExistingIps)
+                            if (hostIp != null) {
+                                val elapsedMs = (System.nanoTime() / 1_000_000L) - startedAtMs
+                                if (elapsedMs < MIN_BEACON_WARMUP_MS) {
+                                    delay(MIN_BEACON_WARMUP_MS - elapsedMs)
+                                }
+                            }
                             if (!isActive || reservation !== res) return@launch
                             withContext(Dispatchers.Main.immediate) {
                                 if (reservation !== res) return@withContext
@@ -70,9 +78,14 @@ class LocalHotspotHost(
                     }
 
                     override fun onStopped() {
+                        val wasActive = reservation != null
                         resolveJob?.cancel()
                         resolveJob = null
                         reservation = null
+                        if (wasActive) {
+                            Log.w(TAG, "LocalOnlyHotspot stopped unexpectedly by system")
+                            onStoppedUnexpectedly?.invoke()
+                        }
                     }
 
                     override fun onFailed(reason: Int) {
@@ -101,11 +114,13 @@ class LocalHotspotHost(
     fun stop() {
         resolveJob?.cancel()
         resolveJob = null
+        val res = reservation
+        // Clear reservation before close() so intentional stop does not fire onStoppedUnexpectedly.
+        reservation = null
         try {
-            reservation?.close()
+            res?.close()
         } catch (_: Exception) {
         }
-        reservation = null
     }
 
     private fun extractCredentials(res: WifiManager.LocalOnlyHotspotReservation): Pair<String?, String?> {
@@ -140,5 +155,6 @@ class LocalHotspotHost(
 
     companion object {
         private const val TAG = "RiderLink"
+        private const val MIN_BEACON_WARMUP_MS = 1_500L
     }
 }

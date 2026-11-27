@@ -20,7 +20,7 @@ sealed class ConnectionState {
         val qrPayload: QrPayload,
         val mode: TransportMode
     ) : ConnectionState()
-    data class JoiningWifi(val ssid: String) : ConnectionState()
+    data class JoiningWifi(val ssid: String, val attempt: Int = 1) : ConnectionState()
     data class ConnectingUdp(
         val hostIp: String,
         val port: Int,

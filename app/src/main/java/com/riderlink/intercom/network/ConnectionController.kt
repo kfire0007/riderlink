@@ -68,6 +68,13 @@ class ConnectionController(
             },
             onError = { err ->
                 _connectionState.value = ConnectionState.Error(err)
+            },
+            onStoppedUnexpectedly = {
+                if (_connectionState.value is ConnectionState.HostReady) {
+                    transport?.stop()
+                    transport = null
+                    _connectionState.value = ConnectionState.Error("Local hotspot stopped by Android. Tap Try again.")
+                }
             }
         )
     }
@@ -113,6 +120,9 @@ class ConnectionController(
             },
             onError = { err ->
                 _connectionState.value = ConnectionState.Error(err)
+            },
+            onRetrying = { nextAttempt ->
+                _connectionState.value = ConnectionState.JoiningWifi(qrPayload.ssid, nextAttempt)
             }
         )
     }

@@ -7,6 +7,8 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import java.net.Inet4Address
 import java.util.concurrent.atomic.AtomicBoolean
@@ -25,6 +27,8 @@ class WifiSpecifierClient(context: Context) {
     private val connectivityManager =
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingRetryRunnable: Runnable? = null
     private var activeCallback: ConnectivityManager.NetworkCallback? = null
     private val active = AtomicBoolean(false)
     private val delivered = AtomicBoolean(false)
@@ -33,11 +37,31 @@ class WifiSpecifierClient(context: Context) {
         ssid: String,
         passphrase: String,
         onConnected: (ConnectedWifi) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        onRetrying: ((Int) -> Unit)? = null
     ) {
         stop()
         active.set(true)
         delivered.set(false)
+        requestAttempt(
+            ssid = ssid,
+            passphrase = passphrase,
+            attempt = 1,
+            onConnected = onConnected,
+            onRetrying = onRetrying,
+            onError = onError
+        )
+    }
+
+    private fun requestAttempt(
+        ssid: String,
+        passphrase: String,
+        attempt: Int,
+        onConnected: (ConnectedWifi) -> Unit,
+        onRetrying: ((Int) -> Unit)?,
+        onError: (String) -> Unit
+    ) {
+        if (!active.get() || delivered.get()) return
 
         val specifier = WifiNetworkSpecifier.Builder()
             .setSsid(ssid)
@@ -60,8 +84,26 @@ class WifiSpecifierClient(context: Context) {
             }
 
             override fun onUnavailable() {
-                if (active.compareAndSet(true, false)) {
-                    Log.w(TAG, "WifiSpecifier unavailable for ssid=$ssid")
+                if (activeCallback === this) {
+                    activeCallback = null
+                }
+                runCatching { connectivityManager.unregisterNetworkCallback(this) }
+
+                if (active.get() && !delivered.get() && attempt <= MAX_AUTO_RETRIES) {
+                    val nextAttempt = attempt + 1
+                    Log.w(
+                        TAG,
+                        "WifiSpecifier attempt $attempt unavailable for ssid=$ssid; auto-retrying in ${RETRY_DELAY_MS}ms"
+                    )
+                    onRetrying?.invoke(nextAttempt)
+                    val retryRunnable = Runnable {
+                        pendingRetryRunnable = null
+                        requestAttempt(ssid, passphrase, nextAttempt, onConnected, onRetrying, onError)
+                    }
+                    pendingRetryRunnable = retryRunnable
+                    mainHandler.postDelayed(retryRunnable, RETRY_DELAY_MS)
+                } else if (active.compareAndSet(true, false)) {
+                    Log.w(TAG, "WifiSpecifier unavailable for ssid=$ssid after attempt $attempt")
                     onError("Could not connect to Rider hotspot '$ssid'. Stay close and try again.")
                 }
             }
@@ -89,6 +131,8 @@ class WifiSpecifierClient(context: Context) {
     fun stop() {
         active.set(false)
         delivered.set(false)
+        pendingRetryRunnable?.let { mainHandler.removeCallbacks(it) }
+        pendingRetryRunnable = null
         val cb = activeCallback ?: return
         activeCallback = null
         try {
@@ -119,5 +163,7 @@ class WifiSpecifierClient(context: Context) {
     companion object {
         private const val TAG = "RiderLink"
         private const val CONNECT_TIMEOUT_MS = 25_000
+        private const val MAX_AUTO_RETRIES = 1
+        private const val RETRY_DELAY_MS = 1_800L
     }
 }

@@ -29,9 +29,11 @@
     <string name="grant_permissions">Grant permissions</string>
     <string name="host_waiting_scan">Waiting for passenger to scan</string>
     <string name="host_starting_hotspot">Starting local hotspot…</string>
+    <string name="host_private_hotspot_note">Private offline link active. Your phone\'s Quick Settings Hotspot switch will stay OFF — that is normal.</string>
     <string name="host_code_label">Session code</string>
     <string name="join_scan_qr_button">Scan rider\'s QR</string>
     <string name="join_connecting_wifi">Connecting to rider\'s Wi-Fi…</string>
+    <string name="join_retrying_wifi">Retrying Wi-Fi link…</string>
     <string name="join_connecting_udp">Opening voice link…</string>
     <string name="join_wifi_fallback_title">If the Wi-Fi popup keeps loading:</string>
     <string name="join_copy_open_wifi">Copy password &amp; open Wi-Fi</string>
