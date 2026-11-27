@@ -75,9 +75,7 @@ class LocalWebBridgeServer(
     private var htmlBytes: ByteArray = ByteArray(0)
 
     val isClientConnected: Boolean
-        get() = synchronized(txLock) {
-            activeWsOut != null && activeWsSocket?.isClosed == false
-        }
+        get() = activeWsOut != null && activeWsSocket?.isClosed == false
 
     val boundPort: Int
         get() = serverSocket?.localPort ?: -1
@@ -356,7 +354,10 @@ class LocalWebBridgeServer(
                             }
                             listener.onHeartbeat(rtt)
                         }
-                        else -> listener.onClientControl(msg)
+                        else -> {
+                            listener.onClientControl(msg)
+                            if (msg == "ctrl:goodbye") break
+                        }
                     }
                 }
                 WebSocketCodec.OPCODE_PING -> {

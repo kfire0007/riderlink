@@ -234,11 +234,20 @@ class PairActivity : AppCompatActivity() {
         }
 
         renderRolePanels()
+        savedInstanceState?.getString(STATE_LAST_SCANNED_QR)?.let { QrPayload.parse(it) }?.let { qr ->
+            lastScannedQr = qr
+            showWifiFallbackPanel(qr)
+        }
         bindService(
             Intent(this, IntercomForegroundService::class.java),
             serviceConnection,
             Context.BIND_AUTO_CREATE
         )
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        lastScannedQr?.encode()?.let { outState.putString(STATE_LAST_SCANNED_QR, it) }
     }
 
     override fun onResume() {
@@ -449,5 +458,6 @@ class PairActivity : AppCompatActivity() {
         private const val PREFS_NAME = "riderlink_prefs"
         private const val KEY_LAST_IP = "last_host_ip"
         private const val KEY_LAST_PORT = "last_host_port"
+        private const val STATE_LAST_SCANNED_QR = "state_last_scanned_qr"
     }
 }

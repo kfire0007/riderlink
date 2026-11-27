@@ -46,12 +46,10 @@ object NetworkAddressResolver {
             ?.hostAddress
         val subnetGateway = clientIpv4?.let { ip ->
             val lastDot = ip.lastIndexOf('.')
-            if (lastDot > 0) "${ip.substring(0, dotIndex(ip))}.1" else null
+            if (lastDot > 0) "${ip.substring(0, lastDot)}.1" else null
         }
         return dhcpServer ?: routeGateway ?: subnetGateway
     }
-
-    private fun dotIndex(ip: String): Int = ip.lastIndexOf('.')
 
     fun listFilteredInterfaceIpv4s(): List<Pair<String, String>> {
         val interfaces = try {

@@ -292,6 +292,12 @@
         } else if (ev.data === 'ctrl:peer_call_ended') {
           rideAlert.classList.add('hidden');
           rideAlert.textContent = '';
+        } else if (ev.data === 'ctrl:goodbye') {
+          isClosing = true;
+          cleanupSession();
+          rideView.classList.add('hidden');
+          joinView.classList.remove('hidden');
+          joinErr.textContent = 'Rider ended the ride.';
         }
         return;
       }

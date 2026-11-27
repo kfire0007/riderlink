@@ -18,6 +18,7 @@ import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
@@ -236,6 +237,78 @@ class WebBridgeTest {
                 // Stay idle past wsReadTimeoutMs (250 ms) -> server disconnects automatically
                 assertTrue("Idle client should trigger onClientDisconnected", disconnectedLatch.await(2, TimeUnit.SECONDS))
             }
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun clientGoodbyeTriggersSingleDisconnectCallback() {
+        val p12File = listOf(
+            File("src/main/res/raw/riderlink_local.p12"),
+            File("app/src/main/res/raw/riderlink_local.p12")
+        ).first { it.exists() }
+
+        val connectedLatch = CountDownLatch(1)
+        val controlLatch = CountDownLatch(1)
+        val disconnectLatch = CountDownLatch(1)
+        val disconnectCount = AtomicInteger(0)
+
+        val server = LocalWebBridgeServer(
+            openKeystore = { FileInputStream(p12File) },
+            keystorePassword = "riderlink",
+            loadHtmlBytes = { "<html></html>".toByteArray(StandardCharsets.UTF_8) },
+            listener = object : LocalWebBridgeServer.Listener {
+                override fun onClientConnected(clientIp: String) {
+                    connectedLatch.countDown()
+                }
+                override fun onAudioFrame(pcmBytes: ByteArray, offset: Int, length: Int) {}
+                override fun onHeartbeat(rttMs: Long?) {}
+                override fun onClientControl(message: String) {
+                    if (message == "ctrl:goodbye") controlLatch.countDown()
+                }
+                override fun onClientDisconnected() {
+                    disconnectCount.incrementAndGet()
+                    disconnectLatch.countDown()
+                }
+            }
+        )
+
+        val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        })
+        val clientSsl = SSLContext.getInstance("TLS").apply { init(null, trustAll, SecureRandom()) }
+
+        try {
+            server.start(port = 0, sessionToken = 2468)
+            (clientSsl.socketFactory.createSocket("127.0.0.1", server.boundPort) as SSLSocket).use { s ->
+                val req = "GET /ws?token=2468 HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+                s.outputStream.write(req.toByteArray())
+                s.outputStream.flush()
+                val bis = BufferedInputStream(s.inputStream)
+                val header = StringBuilder()
+                while (!header.endsWith("\r\n\r\n")) {
+                    val b = bis.read()
+                    if (b == -1) break
+                    header.append(b.toChar())
+                }
+                assertTrue(connectedLatch.await(2, TimeUnit.SECONDS))
+
+                val msg = "ctrl:goodbye".toByteArray(StandardCharsets.UTF_8)
+                val mask = byteArrayOf(0x11, 0x22, 0x33, 0x44)
+                s.outputStream.write(byteArrayOf(0x81.toByte(), (0x80 or msg.size).toByte()))
+                s.outputStream.write(mask)
+                for (i in msg.indices) {
+                    s.outputStream.write((msg[i].toInt() xor mask[i and 3].toInt()) and 0xFF)
+                }
+                s.outputStream.flush()
+                assertTrue(controlLatch.await(2, TimeUnit.SECONDS))
+                assertTrue(disconnectLatch.await(2, TimeUnit.SECONDS))
+            }
+            Thread.sleep(100)
+            assertEquals(1, disconnectCount.get())
         } finally {
             server.stop()
         }

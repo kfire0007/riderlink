@@ -49,4 +49,10 @@ class NetworkAddressResolverTest {
         assertNull(LanFallbackConnector.validateJoinInputs("192.168.43.1", "49152", "99999"))
         assertNull(LanFallbackConnector.validateJoinInputs("not-an-ip", "49152", "0742"))
     }
+
+    @Test
+    fun joiningWifiStateTracksAttemptCount() {
+        assertEquals(1, ConnectionState.JoiningWifi("RiderNet").attempt)
+        assertEquals(2, ConnectionState.JoiningWifi("RiderNet", attempt = 2).attempt)
+    }
 }

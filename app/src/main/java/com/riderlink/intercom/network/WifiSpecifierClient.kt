@@ -118,7 +118,7 @@ class WifiSpecifierClient(context: Context) {
 
         activeCallback = callback
         try {
-            connectivityManager.requestNetwork(request, callback, CONNECT_TIMEOUT_MS)
+            connectivityManager.requestNetwork(request, callback, mainHandler, CONNECT_TIMEOUT_MS)
         } catch (se: SecurityException) {
             active.set(false)
             onError("Missing Wi-Fi/Network permission: ${se.message}")

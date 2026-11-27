@@ -37,6 +37,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Foreground service coordinating ConnectionController, IntercomAudioEngine,
@@ -73,6 +75,7 @@ class IntercomForegroundService : Service() {
     private var statsRefreshJob: Job? = null
     private var webHostObserverJob: Job? = null
     private var webStartJob: Job? = null
+    private var stopJob: Job? = null
     private var audioPipelineStarted = false
     private var hasConnectedOnce = false
     private var webRxSeq = 0L
@@ -141,9 +144,7 @@ class IntercomForegroundService : Service() {
                 }
 
                 override fun onClientControl(message: String) {
-                    if (message == "ctrl:goodbye") {
-                        onClientDisconnected()
-                    }
+                    // ctrl:goodbye breaks LocalWebBridgeServer's read loop so finally notifies disconnect once.
                 }
 
                 override fun onClientDisconnected() {
@@ -315,17 +316,14 @@ class IntercomForegroundService : Service() {
         hardwareButtons.onKeyUp(keyCode)
 
     fun stopSession(stopService: Boolean = true) {
-        connectionController.transport?.sendControl(ControlCode.GOODBYE)
-        webBridgeServer.sendTextControl("ctrl:goodbye")
-
+        stopJob?.cancel()
+        stopJob = null
         webStartJob?.cancel()
         webStartJob = null
         statsRefreshJob?.cancel()
         statsRefreshJob = null
 
-        webBridgeServer.stop()
         stopAudioPipeline()
-        connectionController.stop()
         talkModeController.reset()
         hasConnectedOnce = false
         webRxSeq = 0L
@@ -337,12 +335,30 @@ class IntercomForegroundService : Service() {
             isMuted = false
         )
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        if (stopService) {
+
+        if (!stopService) {
+            webBridgeServer.stop()
+            connectionController.stop()
+            return
+        }
+
+        stopJob = serviceScope.launch {
+            withTimeoutOrNull(250L) {
+                withContext(Dispatchers.IO) {
+                    runCatching { connectionController.transport?.sendControl(ControlCode.GOODBYE) }
+                    if (webBridgeServer.isClientConnected) {
+                        runCatching { webBridgeServer.sendTextControl("ctrl:goodbye") }
+                    }
+                }
+            }
+            webBridgeServer.stop()
+            connectionController.stop()
             stopSelf()
         }
     }
 
     override fun onDestroy() {
+        stopJob?.cancel()
         webHostObserverJob?.cancel()
         stopSession(stopService = false)
         serviceScope.cancel()
@@ -350,6 +366,8 @@ class IntercomForegroundService : Service() {
     }
 
     private fun prepareSessionStart() {
+        stopJob?.cancel()
+        stopJob = null
         hasConnectedOnce = false
         talkModeController.reset()
         promoteToForeground()
@@ -408,16 +426,24 @@ class IntercomForegroundService : Service() {
         if (!audioPipelineStarted) return
         if (isCallActive) {
             talkModeController.setLocalCallPaused(true)
-            connectionController.transport?.sendControl(ControlCode.PEER_ON_CALL)
-            webBridgeServer.sendTextControl("ctrl:peer_on_call")
             audioEngine.setPausedForCall(true)
             headsetRouteManager.suspendForCellularCall()
+            serviceScope.launch(Dispatchers.IO) {
+                runCatching { connectionController.transport?.sendControl(ControlCode.PEER_ON_CALL) }
+                if (webBridgeServer.isClientConnected) {
+                    runCatching { webBridgeServer.sendTextControl("ctrl:peer_on_call") }
+                }
+            }
         } else {
             headsetRouteManager.resumeAfterCellularCall()
             audioEngine.setPausedForCall(false)
             talkModeController.setLocalCallPaused(false)
-            connectionController.transport?.sendControl(ControlCode.PEER_CALL_ENDED)
-            webBridgeServer.sendTextControl("ctrl:peer_call_ended")
+            serviceScope.launch(Dispatchers.IO) {
+                runCatching { connectionController.transport?.sendControl(ControlCode.PEER_CALL_ENDED) }
+                if (webBridgeServer.isClientConnected) {
+                    runCatching { webBridgeServer.sendTextControl("ctrl:peer_call_ended") }
+                }
+            }
         }
     }
 
@@ -452,7 +478,9 @@ class IntercomForegroundService : Service() {
         statsRefreshJob = serviceScope.launch {
             while (isActive) {
                 if (webBridgeServer.isClientConnected) {
-                    webBridgeServer.sendPing(System.nanoTime() / 1_000_000L)
+                    withContext(Dispatchers.IO) {
+                        webBridgeServer.sendPing(System.nanoTime() / 1_000_000L)
+                    }
                 }
                 connectionController.refreshStats()
                 refreshDiagnostics()
