@@ -1,28 +1,29 @@
 package com.riderlink.intercom.ui
 
 import android.annotation.SuppressLint
-import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
 import android.os.Bundle
-import android.os.IBinder
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.widget.SeekBar
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.riderlink.intercom.R
+import com.riderlink.intercom.RiderLinkApp
 import com.riderlink.intercom.databinding.ActivityRideBinding
-import com.riderlink.intercom.network.LinkState
-import com.riderlink.intercom.network.TransportStats
+import com.riderlink.intercom.oem.BatteryOptimizationHelper
+import com.riderlink.intercom.ride.LinkStatus
+import com.riderlink.intercom.ride.RideOutcome
+import com.riderlink.intercom.ride.RidePhase
+import com.riderlink.intercom.ride.RideState
+import com.riderlink.intercom.ride.RideStats
 import com.riderlink.intercom.service.AudioRouteState
 import com.riderlink.intercom.service.AudioRouteType
-import com.riderlink.intercom.service.IntercomForegroundService
 import com.riderlink.intercom.service.TalkControlState
 import com.riderlink.intercom.service.TalkMode
 import kotlinx.coroutines.flow.combine
@@ -32,24 +33,8 @@ class RideActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityRideBinding
     private lateinit var diagnosticsDrawer: LiveDiagnosticsDrawer
-
-    private var service: IntercomForegroundService? = null
-    private var bound = false
-
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            val s = (binder as IntercomForegroundService.LocalBinder).getService()
-            service = s
-            bound = true
-            s.refreshBatteryStatus()
-            observeService(s)
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            service = null
-            bound = false
-        }
-    }
+    private val app by lazy { RiderLinkApp.from(this) }
+    private var leaving = false
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,26 +44,25 @@ class RideActivity : AppCompatActivity() {
         binding.root.applySystemBarInsets()
 
         diagnosticsDrawer = LiveDiagnosticsDrawer(this, binding.diagnosticsDrawer)
+        val voice = app.voice
 
         binding.btnCockpitCenter.setOnClickListener {
-            val s = service ?: return@setOnClickListener
-            if (s.talkControlState.value.mode == TalkMode.HANDS_FREE) {
-                s.toggleMute()
+            if (voice.talkControlState.value.mode == TalkMode.HANDS_FREE) {
+                voice.toggleMute()
             }
         }
 
         binding.btnCockpitCenter.setOnTouchListener { _, event ->
-            val s = service ?: return@setOnTouchListener false
-            if (s.talkControlState.value.mode != TalkMode.PUSH_TO_TALK) {
+            if (voice.talkControlState.value.mode != TalkMode.PUSH_TO_TALK) {
                 return@setOnTouchListener false
             }
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    s.setPttPressed(true)
+                    voice.setPttPressed(true)
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    s.setPttPressed(false)
+                    voice.setPttPressed(false)
                     true
                 }
                 else -> false
@@ -87,13 +71,9 @@ class RideActivity : AppCompatActivity() {
 
         binding.toggleTalkMode.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
-            val mode = if (checkedId == R.id.btnModeHandsFree) {
-                TalkMode.HANDS_FREE
-            } else {
-                TalkMode.PUSH_TO_TALK
-            }
-            if (service?.talkControlState?.value?.mode != mode) {
-                service?.setTalkMode(mode)
+            val mode = if (checkedId == R.id.btnModeHandsFree) TalkMode.HANDS_FREE else TalkMode.PUSH_TO_TALK
+            if (voice.talkControlState.value.mode != mode) {
+                voice.setTalkMode(mode)
             }
         }
 
@@ -101,7 +81,7 @@ class RideActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 binding.txtWindGateValue.text = formatWindGate(progress)
                 if (fromUser) {
-                    service?.setMicGateThreshold(progress)
+                    voice.setMicGateThreshold(progress)
                 }
             }
 
@@ -114,83 +94,88 @@ class RideActivity : AppCompatActivity() {
             root.visibility = if (root.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
 
+        binding.txtRideAlert.setOnClickListener {
+            val phase = app.ride.state.value.phase
+            if (phase is RidePhase.NetworkLost || phase is RidePhase.Failed) {
+                app.ride.retry()
+            }
+        }
+
         binding.btnEndRide.setOnClickListener {
-            service?.stopSession()
-            startActivity(Intent(this, HomeActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            })
-            finish()
+            app.ride.end()
+            goHome()
         }
 
-        bindService(
-            Intent(this, IntercomForegroundService::class.java),
-            serviceConnection,
-            Context.BIND_AUTO_CREATE
-        )
-    }
-
-    override fun onResume() {
-        super.onResume()
-        service?.refreshBatteryStatus()
-    }
-
-    override fun onDestroy() {
-        if (bound) {
-            unbindService(serviceConnection)
-            bound = false
-        }
-        super.onDestroy()
+        observeRide()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (service?.handleHardwareKeyDown(keyCode, event?.repeatCount ?: 0) == true) {
-            return true
-        }
+        if (app.voice.handleHardwareKeyDown(keyCode, event?.repeatCount ?: 0)) return true
         return super.onKeyDown(keyCode, event)
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
-        if (service?.handleHardwareKeyUp(keyCode) == true) {
-            return true
-        }
+        if (app.voice.handleHardwareKeyUp(keyCode)) return true
         return super.onKeyUp(keyCode, event)
     }
 
-    private fun observeService(s: IntercomForegroundService) {
+    private fun observeRide() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 combine(
-                    s.transportStats,
-                    s.diagnostics,
-                    s.audioRouteState,
-                    s.talkControlState
-                ) { stats, diag, route, talk ->
-                    Quad(stats, diag, route, talk)
-                }.collect { (stats, diag, route, talk) ->
-                    renderCockpit(stats, diag, route, talk)
-                    diagnosticsDrawer.render(stats, diag, route, s.activeTransportMode)
-                }
+                    app.ride.state,
+                    app.ride.stats,
+                    app.voice.audioRouteState,
+                    app.voice.talkControlState
+                ) { ride, stats, route, talk -> Snapshot(ride, stats, route, talk) }
+                    .collect { s ->
+                        if (s.ride.isIdle) {
+                            if (s.ride.lastOutcome == RideOutcome.EndedByHost) {
+                                Toast.makeText(this@RideActivity, "The Host ended the ride.", Toast.LENGTH_LONG).show()
+                            }
+                            goHome()
+                            return@collect
+                        }
+                        renderCockpit(s.ride, s.stats, s.route, s.talk)
+                        diagnosticsDrawer.render(
+                            s.ride,
+                            s.stats,
+                            s.route,
+                            LiveDiagnosticsDrawer.DeviceStatus(
+                                wakeLockHeld = app.locks.isWakeLockHeld,
+                                wifiLockHeld = app.locks.isWifiLockHeld,
+                                batteryExempt = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(this@RideActivity),
+                                jitterDepthFrames = app.voice.jitterDepthFrames
+                            )
+                        )
+                    }
             }
         }
     }
 
-    private fun renderCockpit(
-        stats: TransportStats,
-        diag: IntercomForegroundService.ServiceDiagnostics,
-        route: AudioRouteState,
-        talk: TalkControlState
-    ) {
+    private fun goHome() {
+        if (leaving) return
+        leaving = true
+        startActivity(Intent(this, HomeActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        })
+        finish()
+    }
+
+    private fun renderCockpit(ride: RideState, stats: RideStats, route: AudioRouteState, talk: TalkControlState) {
         // Link pill
-        when (stats.linkState) {
-            LinkState.CONNECTED -> {
-                binding.txtPillLink.text = "Connected ${stats.rttMs} ms"
+        val phase = ride.phase
+        when {
+            ride.anyLinked -> {
+                val rtt = stats.links.firstOrNull()?.stats?.rttMs ?: 0L
+                binding.txtPillLink.text = "Connected $rtt ms"
                 binding.txtPillLink.setTextColor(ContextCompat.getColor(this, R.color.live_emerald))
             }
-            LinkState.RECONNECTING -> {
+            ride.links.any { it.status == LinkStatus.RECONNECTING } -> {
                 binding.txtPillLink.text = "Reconnecting"
                 binding.txtPillLink.setTextColor(ContextCompat.getColor(this, R.color.signal_amber))
             }
-            LinkState.WAITING_FOR_PEER -> {
+            phase == RidePhase.WaitingForPeers || phase == RidePhase.Linking -> {
                 binding.txtPillLink.text = "Waiting"
                 binding.txtPillLink.setTextColor(ContextCompat.getColor(this, R.color.ink_slate))
             }
@@ -207,21 +192,14 @@ class RideActivity : AppCompatActivity() {
             AudioRouteType.PHONE_SPEAKER -> "Speaker"
         }
         binding.txtPillAudio.setTextColor(
-            ContextCompat.getColor(
-                this,
-                if (route.isSpeakerFallback) R.color.signal_amber else R.color.ink_white
-            )
+            ContextCompat.getColor(this, if (route.isSpeakerFallback) R.color.signal_amber else R.color.ink_white)
         )
 
         // Mode pill & toggle sync
         binding.txtPillMode.setText(
             if (talk.mode == TalkMode.HANDS_FREE) R.string.mode_hands_free else R.string.mode_ptt
         )
-        val desiredToggleId = if (talk.mode == TalkMode.HANDS_FREE) {
-            R.id.btnModeHandsFree
-        } else {
-            R.id.btnModePtt
-        }
+        val desiredToggleId = if (talk.mode == TalkMode.HANDS_FREE) R.id.btnModeHandsFree else R.id.btnModePtt
         if (binding.toggleTalkMode.checkedButtonId != desiredToggleId) {
             binding.toggleTalkMode.check(desiredToggleId)
         }
@@ -230,11 +208,13 @@ class RideActivity : AppCompatActivity() {
             binding.txtWindGateValue.text = formatWindGate(talk.micGateThresholdRms)
         }
 
-        // Alert strip priority: local call > peer call > reconnecting > speaker fallback
+        // Alert strip priority: local call > peer call > network gone > reconnecting > speaker fallback
         val alertText = when {
             talk.isLocalCallPaused -> getString(R.string.warn_local_on_call)
             talk.isPeerOnCall -> getString(R.string.warn_peer_on_call)
-            stats.linkState == LinkState.RECONNECTING -> getString(R.string.warn_reconnecting)
+            phase is RidePhase.NetworkLost -> "${phase.message} (tap here)"
+            phase is RidePhase.Failed -> "${phase.message} Tap here to try again."
+            ride.links.isNotEmpty() && !ride.anyLinked -> getString(R.string.warn_reconnecting)
             route.isSpeakerFallback -> getString(R.string.warn_speaker_fallback)
             else -> null
         }
@@ -248,7 +228,7 @@ class RideActivity : AppCompatActivity() {
         // Center cockpit switch + wind gate visibility
         if (talk.mode == TalkMode.HANDS_FREE) {
             binding.panelWindGate.visibility = View.VISIBLE
-            if (talk.isMuted || diag.isMuted) {
+            if (talk.isMuted) {
                 binding.btnCockpitCenter.setBackgroundResource(R.drawable.bg_cockpit_ring_muted)
                 binding.txtCenterPrimary.setText(R.string.mic_muted)
                 binding.txtCenterPrimary.setTextColor(ContextCompat.getColor(this, R.color.ink_white))
@@ -286,9 +266,9 @@ class RideActivity : AppCompatActivity() {
         else -> "High ($rms)"
     }
 
-    private data class Quad(
-        val stats: TransportStats,
-        val diag: IntercomForegroundService.ServiceDiagnostics,
+    private data class Snapshot(
+        val ride: RideState,
+        val stats: RideStats,
         val route: AudioRouteState,
         val talk: TalkControlState
     )

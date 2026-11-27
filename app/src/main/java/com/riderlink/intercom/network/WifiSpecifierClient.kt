@@ -38,7 +38,8 @@ class WifiSpecifierClient(context: Context) {
         passphrase: String,
         onConnected: (ConnectedWifi) -> Unit,
         onError: (String) -> Unit,
-        onRetrying: ((Int) -> Unit)? = null
+        onRetrying: ((Int) -> Unit)? = null,
+        onLost: (() -> Unit)? = null
     ) {
         stop()
         active.set(true)
@@ -49,7 +50,8 @@ class WifiSpecifierClient(context: Context) {
             attempt = 1,
             onConnected = onConnected,
             onRetrying = onRetrying,
-            onError = onError
+            onError = onError,
+            onLost = onLost
         )
     }
 
@@ -59,7 +61,8 @@ class WifiSpecifierClient(context: Context) {
         attempt: Int,
         onConnected: (ConnectedWifi) -> Unit,
         onRetrying: ((Int) -> Unit)?,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        onLost: (() -> Unit)?
     ) {
         if (!active.get() || delivered.get()) return
 
@@ -100,7 +103,7 @@ class WifiSpecifierClient(context: Context) {
                     onRetrying?.invoke(nextAttempt)
                     val retryRunnable = Runnable {
                         pendingRetryRunnable = null
-                        requestAttempt(ssid, passphrase, nextAttempt, onConnected, onRetrying, onError)
+                        requestAttempt(ssid, passphrase, nextAttempt, onConnected, onRetrying, onError, onLost)
                     }
                     pendingRetryRunnable = retryRunnable
                     mainHandler.postDelayed(retryRunnable, RETRY_DELAY_MS)
@@ -112,8 +115,12 @@ class WifiSpecifierClient(context: Context) {
 
             override fun onLost(network: Network) {
                 if (active.compareAndSet(true, false)) {
-                    Log.w(TAG, "WifiSpecifier lost for ssid=$ssid")
-                    onError("Lost local Wi-Fi link to Rider hotspot.")
+                    Log.w(TAG, "WifiSpecifier lost for ssid=$ssid (delivered=${delivered.get()})")
+                    if (delivered.get() && onLost != null) {
+                        onLost()
+                    } else {
+                        onError("Lost local Wi-Fi link to Rider hotspot.")
+                    }
                 }
             }
         }

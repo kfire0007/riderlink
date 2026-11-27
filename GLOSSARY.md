@@ -52,6 +52,10 @@ _Avoid_: PIN, password
 
 ## Link health
 
+**Link**:
+The voice connection between this phone and one other phone or **Safari peer** in the same **Ride**. A **Host** has one **Link** per **Peer**; a **Peer** has one **Link**, to its **Host**.
+_Avoid_: Connection, transport, session
+
 **Reconnecting**:
 A **Peer**'s heartbeat has stopped while the local network is still up; it recovers by itself once packets flow again.
 _Avoid_: Disconnected, dropped

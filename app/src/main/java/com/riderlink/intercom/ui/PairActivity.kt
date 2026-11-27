@@ -3,55 +3,56 @@ package com.riderlink.intercom.ui
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
-import android.os.IBinder
 import android.os.PersistableBundle
 import android.provider.Settings
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.riderlink.intercom.R
+import com.riderlink.intercom.RiderLinkApp
 import com.riderlink.intercom.databinding.ActivityPairBinding
-import com.riderlink.intercom.network.ConnectionState
 import com.riderlink.intercom.network.LanFallbackConnector
-import com.riderlink.intercom.network.Role
-import com.riderlink.intercom.network.TransportMode
 import com.riderlink.intercom.protocol.QrPayload
 import com.riderlink.intercom.protocol.SessionToken
-import com.riderlink.intercom.service.IntercomForegroundService
+import com.riderlink.intercom.ride.JoinVia
+import com.riderlink.intercom.ride.NetworkKind
+import com.riderlink.intercom.ride.PairingInvitation
+import com.riderlink.intercom.ride.RidePhase
+import com.riderlink.intercom.ride.RideRole
+import com.riderlink.intercom.ride.RideState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Pre-flight checks (permissions, Location) and pairing screens. Sends host/join/retry/end
+ * commands to the app-scoped Ride and renders its state; it never starts or binds the service.
+ */
 class PairActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityPairBinding
-    private lateinit var role: Role
-    private var selectedMode: TransportMode = TransportMode.LOCAL_ONLY_HOTSPOT
+    private lateinit var role: RideRole
+    private var selectedNetwork = NetworkKind.HOTSPOT
     private var isIphoneHostTab = false
     private var iphoneStepSafari = false
-    private var lastHostQrPayload: QrPayload? = null
+    private var lastHostInvitation: PairingInvitation? = null
     private var lastScannedQr: QrPayload? = null
-    private var pendingJoinQr: QrPayload? = null
 
-    private var service: IntercomForegroundService? = null
-    private var bound = false
+    private val ride by lazy { RiderLinkApp.from(this).ride }
     private var navigatedToRide = false
-    private var sessionStoppedByUser = false
+    private var rideEndedByUser = false
 
     private val qrBitmapCache = HashMap<String, Bitmap>(4)
     private var qrRenderJob: Job? = null
@@ -76,28 +77,7 @@ class PairActivity : AppCompatActivity() {
         hideError()
         lastScannedQr = parsed
         showWifiFallbackPanel(parsed)
-        ensureServiceStartedAndJoinQr(parsed)
-    }
-
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            val s = (binder as IntercomForegroundService.LocalBinder).getService()
-            service = s
-            bound = true
-            observeServiceState(s)
-            val pending = pendingJoinQr
-            if (pending != null) {
-                pendingJoinQr = null
-                s.joinViaQr(pending)
-            } else {
-                updatePreFlightAndStartIfReady()
-            }
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            service = null
-            bound = false
-        }
+        joinViaScannedQr(parsed)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -106,18 +86,17 @@ class PairActivity : AppCompatActivity() {
         setContentView(binding.root)
         binding.root.applySystemBarInsets()
 
-        val roleName = intent.getStringExtra(EXTRA_ROLE) ?: Role.HOST_RIDER.name
-        role = Role.valueOf(roleName)
+        val roleName = intent.getStringExtra(EXTRA_ROLE) ?: RideRole.HOST.name
+        role = RideRole.valueOf(roleName)
 
         binding.txtPairTitle.setText(
-            if (role == Role.HOST_RIDER) R.string.pair_host_title else R.string.pair_join_title
+            if (role == RideRole.HOST) R.string.pair_host_title else R.string.pair_join_title
         )
-        binding.btnTabIphone.visibility = if (role == Role.HOST_RIDER) View.VISIBLE else View.GONE
+        binding.btnTabIphone.visibility = if (role == RideRole.HOST) View.VISIBLE else View.GONE
 
         binding.btnBack.setOnClickListener {
-            pendingJoinQr = null
-            sessionStoppedByUser = true
-            service?.stopSession()
+            rideEndedByUser = true
+            ride.end()
             finish()
         }
 
@@ -129,23 +108,20 @@ class PairActivity : AppCompatActivity() {
             when (checkedId) {
                 R.id.btnTabQr -> {
                     isIphoneHostTab = false
-                    selectedMode = TransportMode.LOCAL_ONLY_HOTSPOT
+                    selectedNetwork = NetworkKind.HOTSPOT
                 }
                 R.id.btnTabIphone -> {
                     isIphoneHostTab = true
-                    selectedMode = TransportMode.LOCAL_ONLY_HOTSPOT
+                    selectedNetwork = NetworkKind.HOTSPOT
                 }
                 else -> {
                     isIphoneHostTab = false
-                    selectedMode = TransportMode.MANUAL_LAN
+                    selectedNetwork = NetworkKind.SHARED_WIFI
                 }
             }
-            pendingJoinQr = null
             hideError()
             renderRolePanels()
-            if (bound) {
-                updatePreFlightAndStartIfReady()
-            }
+            updatePreFlightAndStartIfReady()
         }
 
         binding.toggleIphoneStep.addOnButtonCheckedListener { _, checkedId, isChecked ->
@@ -183,15 +159,8 @@ class PairActivity : AppCompatActivity() {
 
         binding.btnConnectAfterWifi.setOnClickListener {
             val qr = lastScannedQr ?: return@setOnClickListener
-            val wifi = LanFallbackConnector.findActiveWifiGateway(this)
             hideError()
-            ensureServiceStarted()
-            service?.joinViaManualLan(
-                hostIp = wifi?.gatewayIp ?: qr.hostIp,
-                port = qr.udpPort,
-                sessionToken = qr.sessionToken,
-                boundNetwork = wifi?.network
-            )
+            ride.join(PairingInvitation.fromQrPayload(qr), JoinVia.CURRENT_WIFI)
         }
 
         binding.btnManualConnect.setOnClickListener {
@@ -214,22 +183,18 @@ class PairActivity : AppCompatActivity() {
                 .putInt(KEY_LAST_PORT, parsed.udpPort)
                 .apply()
             hideError()
-            ensureServiceStarted()
-            val wifiNet = LanFallbackConnector.findActiveWifiGateway(this)?.network
-            service?.joinViaManualLan(parsed.hostIp, parsed.udpPort, parsed.sessionToken, wifiNet)
+            ride.join(
+                PairingInvitation(wifi = null, hostIp = parsed.hostIp, port = parsed.udpPort, sessionToken = parsed.sessionToken),
+                JoinVia.CURRENT_WIFI
+            )
         }
 
         binding.btnRetry.setOnClickListener {
             hideError()
-            if (role == Role.HOST_RIDER) {
-                updatePreFlightAndStartIfReady()
+            if (role == RideRole.HOST) {
+                updatePreFlightAndStartIfReady() // hosting the same kind after a failure retries it
             } else {
-                val qr = lastScannedQr
-                if (qr != null && selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT) {
-                    ensureServiceStartedAndJoinQr(qr)
-                } else {
-                    updatePreFlightAndStartIfReady()
-                }
+                ride.retry()
             }
         }
 
@@ -238,11 +203,7 @@ class PairActivity : AppCompatActivity() {
             lastScannedQr = qr
             showWifiFallbackPanel(qr)
         }
-        bindService(
-            Intent(this, IntercomForegroundService::class.java),
-            serviceConnection,
-            Context.BIND_AUTO_CREATE
-        )
+        observeRide()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -252,45 +213,48 @@ class PairActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (bound) {
-            updatePreFlightAndStartIfReady()
-        }
+        updatePreFlightAndStartIfReady()
     }
 
     override fun onDestroy() {
         qrRenderJob?.cancel()
-        if (!navigatedToRide && isFinishing && !sessionStoppedByUser) {
-            service?.stopSession()
-        }
-        if (bound) {
-            unbindService(serviceConnection)
-            bound = false
+        if (!navigatedToRide && isFinishing && !rideEndedByUser) {
+            ride.end()
         }
         super.onDestroy()
     }
 
+    private fun joinViaScannedQr(qr: QrPayload) {
+        // Wait briefly so PairActivity is focused again after ZXing closes; Android's Wi-Fi
+        // chooser for WifiNetworkSpecifier only shows over a focused foreground Activity.
+        binding.root.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            ride.join(PairingInvitation.fromQrPayload(qr), JoinVia.INVITATION_WIFI)
+        }, SCANNER_CLOSE_DELAY_MS)
+    }
+
     private fun renderRolePanels() {
         when (role) {
-            Role.HOST_RIDER -> {
+            RideRole.HOST -> {
                 binding.panelHost.visibility = View.VISIBLE
                 binding.toggleIphoneStep.visibility = if (isIphoneHostTab) View.VISIBLE else View.GONE
                 binding.panelJoinQr.visibility = View.GONE
                 binding.panelJoinManual.visibility = View.GONE
                 renderHostQr()
             }
-            Role.JOIN_OBR -> {
+            RideRole.PEER -> {
                 binding.panelHost.visibility = View.GONE
                 binding.toggleIphoneStep.visibility = View.GONE
                 binding.panelJoinQr.visibility =
-                    if (selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT) View.VISIBLE else View.GONE
+                    if (selectedNetwork == NetworkKind.HOTSPOT) View.VISIBLE else View.GONE
                 binding.panelJoinManual.visibility =
-                    if (selectedMode == TransportMode.MANUAL_LAN) View.VISIBLE else View.GONE
+                    if (selectedNetwork == NetworkKind.SHARED_WIFI) View.VISIBLE else View.GONE
             }
         }
     }
 
     private fun renderHostQr() {
-        val qr = lastHostQrPayload ?: return
+        val qr = lastHostInvitation?.toQrPayload() ?: return
         val qrContent: String
         if (isIphoneHostTab) {
             if (!iphoneStepSafari) {
@@ -311,7 +275,7 @@ class PairActivity : AppCompatActivity() {
         binding.txtHostSessionCode.text =
             "${getString(R.string.host_code_label)}: ${SessionToken.format(qr.sessionToken)}"
         binding.txtHostHotspotNote.visibility =
-            if (selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT) View.VISIBLE else View.GONE
+            if (selectedNetwork == NetworkKind.HOTSPOT) View.VISIBLE else View.GONE
 
         val cached = qrBitmapCache[qrContent]
         if (cached != null) {
@@ -333,7 +297,7 @@ class PairActivity : AppCompatActivity() {
     private fun updatePreFlightAndStartIfReady() {
         val missing = PermissionHelper.missingPermissions(
             this,
-            includeCamera = role == Role.JOIN_OBR && selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT
+            includeCamera = role == RideRole.PEER && selectedNetwork == NetworkKind.HOTSPOT
         )
         if (missing.isNotEmpty()) {
             binding.bannerPreFlight.visibility = View.VISIBLE
@@ -345,7 +309,7 @@ class PairActivity : AppCompatActivity() {
             return
         }
 
-        if (selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT &&
+        if (selectedNetwork == NetworkKind.HOTSPOT &&
             !PermissionHelper.isLocationEnabledForHotspot(this)
         ) {
             binding.bannerPreFlight.visibility = View.VISIBLE
@@ -359,42 +323,10 @@ class PairActivity : AppCompatActivity() {
 
         binding.bannerPreFlight.visibility = View.GONE
 
-        if (role == Role.HOST_RIDER) {
-            val s = service ?: return
-            val current = s.connectionState.value
-            val alreadyMatches = current is ConnectionState.HostReady && current.mode == selectedMode
-            if (!alreadyMatches && current !is ConnectionState.StartingHotspot) {
-                ensureServiceStarted()
-                if (selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT) {
-                    s.startHostHotspot()
-                } else {
-                    s.startHostManualLan()
-                }
-            }
+        if (role == RideRole.HOST) {
+            // The Ride ignores this if it is already hosting on this network, and retries if that failed.
+            ride.host(selectedNetwork)
         }
-    }
-
-    private fun ensureServiceStarted() {
-        ContextCompat.startForegroundService(
-            this,
-            Intent(this, IntercomForegroundService::class.java)
-        )
-    }
-
-    private fun ensureServiceStartedAndJoinQr(qrPayload: QrPayload) {
-        ensureServiceStarted()
-        // Wait briefly so PairActivity is fully focused after ZXing closes before launching
-        // Android's system WifiNetworkSpecifier chooser.
-        binding.root.postDelayed({
-            if (isFinishing || isDestroyed) return@postDelayed
-            val s = service
-            if (s != null) {
-                pendingJoinQr = null
-                s.joinViaQr(qrPayload)
-            } else {
-                pendingJoinQr = qrPayload
-            }
-        }, 350L)
     }
 
     private fun launchQrScanner() {
@@ -407,40 +339,38 @@ class PairActivity : AppCompatActivity() {
         qrScanLauncher.launch(options)
     }
 
-    private fun observeServiceState(s: IntercomForegroundService) {
+    private fun observeRide() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                s.connectionState.collect { state ->
-                    when (state) {
-                        ConnectionState.Idle -> Unit
-                        ConnectionState.StartingHotspot -> {
-                            binding.txtHostStatus.setText(R.string.host_starting_hotspot)
-                        }
-                        is ConnectionState.HostReady -> {
-                            lastHostQrPayload = state.qrPayload
-                            renderHostQr()
-                        }
-                        is ConnectionState.JoiningWifi -> {
-                            binding.txtJoinStatus.setText(
-                                if (state.attempt > 1) R.string.join_retrying_wifi else R.string.join_connecting_wifi
-                            )
-                        }
-                        is ConnectionState.ConnectingUdp -> {
-                            binding.txtJoinStatus.setText(R.string.join_connecting_udp)
-                        }
-                        is ConnectionState.Connected -> {
-                            if (!navigatedToRide) {
-                                navigatedToRide = true
-                                startActivity(Intent(this@PairActivity, RideActivity::class.java))
-                                finish()
-                            }
-                        }
-                        is ConnectionState.Error -> {
-                            showError(state.message)
-                        }
-                    }
+                ride.state.collect { render(it) }
+            }
+        }
+    }
+
+    private fun render(state: RideState) {
+        when (val phase = state.phase) {
+            RidePhase.Idle -> Unit
+            RidePhase.FormingNetwork -> binding.txtHostStatus.setText(R.string.host_starting_hotspot)
+            is RidePhase.JoiningNetwork -> binding.txtJoinStatus.setText(
+                if (phase.attempt > 1) R.string.join_retrying_wifi else R.string.join_connecting_wifi
+            )
+            RidePhase.WaitingForPeers -> {
+                if (state.invitation != lastHostInvitation) {
+                    lastHostInvitation = state.invitation
+                    renderHostQr()
                 }
             }
+            RidePhase.Linking -> binding.txtJoinStatus.setText(R.string.join_connecting_udp)
+            RidePhase.Riding -> {
+                if (!navigatedToRide) {
+                    navigatedToRide = true
+                    startActivity(Intent(this, RideActivity::class.java))
+                    finish()
+                }
+            }
+            RidePhase.Ending -> Unit
+            is RidePhase.NetworkLost -> showError(phase.message)
+            is RidePhase.Failed -> showError(phase.message)
         }
     }
 
@@ -464,5 +394,6 @@ class PairActivity : AppCompatActivity() {
         private const val KEY_LAST_IP = "last_host_ip"
         private const val KEY_LAST_PORT = "last_host_port"
         private const val STATE_LAST_SCANNED_QR = "state_last_scanned_qr"
+        private const val SCANNER_CLOSE_DELAY_MS = 350L
     }
 }
