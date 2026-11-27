@@ -1,5 +1,7 @@
 package com.riderlink.intercom.ride
 
+import com.riderlink.intercom.protocol.RosterEntry
+import com.riderlink.intercom.protocol.RosterSync
 import com.riderlink.intercom.protocol.SessionToken
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +26,8 @@ class Ride(
     private val safariGateway: PeerGateway?,
     private val hostDialer: HostDialer,
     private val voiceReceiver: VoiceReceiver,
+    /** This phone's Rider name, for the Host's own roster entry. */
+    private val hostRiderName: () -> String = { "Rider" },
     private val newSessionToken: () -> Int = SessionToken::generate,
     private val log: (String) -> Unit = {}
 ) {
@@ -54,6 +58,16 @@ class Ride(
     @Volatile
     private var voiceLinks: List<PeerLink> = emptyList()
 
+    // Group roster (Phase 2 M1). The Host builds it; a Peer keeps the Host's latest copy in state.
+    private val mutedLinks = HashSet<PeerLink>()
+
+    @Volatile
+    private var mutedSnapshot: Set<PeerLink> = emptySet()
+    private var hostSpeaking = false
+    private var speakingLinks: Set<PeerLink> = emptySet()
+    private var rosterVersion = 0
+    private var lastSentRoster: List<RosterEntry>? = null
+
     // --- Commands --------------------------------------------------------------------------
 
     /** Hosts on [kind]. Does nothing if already hosting on [kind]; retries if that ride failed. */
@@ -83,6 +97,19 @@ class Ride(
     fun sendVoiceTo(link: PeerLink, bytes: ByteArray, offset: Int, length: Int) {
         if (link in voiceLinks) link.sendVoice(bytes, offset, length)
     }
+
+    /** Hot path, any thread: the Host muted this rider, so its voice isn't relayed to anyone. */
+    fun isHostMuted(link: PeerLink): Boolean = link in mutedSnapshot
+
+    /** Host: stop (or resume) relaying rider [riderId]'s voice to the group. */
+    fun setHostMuted(riderId: Int, muted: Boolean) = scheduler.post { onSetHostMuted(riderId, muted) }
+
+    /** Host: remove rider [riderId] from the ride; it can't rejoin until this ride ends. */
+    fun remove(riderId: Int) = scheduler.post { onRemove(riderId) }
+
+    /** Host, from the voice side: who is talking right now (for the roster's speaking badges). */
+    fun reportSpeaking(hostTalking: Boolean, talking: Set<PeerLink>) =
+        scheduler.post { onSpeaking(hostTalking, talking) }
 
     // --- Command handling ------------------------------------------------------------------
 
@@ -139,6 +166,7 @@ class Ride(
         localOnCall = onCall
         val control = if (onCall) PeerControl.ON_CALL else PeerControl.CALL_ENDED
         links.keys.forEach { it.sendControl(control) }
+        publishRoster()
     }
 
     // --- Starting --------------------------------------------------------------------------
@@ -206,6 +234,7 @@ class Ride(
             phase = RidePhase.WaitingForPeers,
             invitation = PairingInvitation(wifi, hostIp, port, token)
         )
+        publishRoster()
     }
 
     private fun dialHost(myEpoch: Long, invitation: PairingInvitation, network: JoinedNetwork?) {
@@ -260,6 +289,7 @@ class Ride(
         _state.value = s.copy(
             phase = phase,
             links = emptyList(),
+            roster = emptyList(),
             invitation = if (s.role == RideRole.HOST) null else s.invitation
         )
     }
@@ -277,6 +307,11 @@ class Ride(
         safariGateway?.close()
         links.clear()
         voiceLinks = emptyList()
+        mutedLinks.clear()
+        mutedSnapshot = emptySet()
+        hostSpeaking = false
+        speakingLinks = emptySet()
+        lastSentRoster = null
         _stats.value = RideStats()
     }
 
@@ -308,7 +343,14 @@ class Ride(
             finishIdle(RideOutcome.EndedByHost)
             return
         }
+        dropLink(link)
+    }
+
+    /** Host: a rider left (goodbye) or was removed. */
+    private fun dropLink(link: PeerLink) {
         links.remove(link)
+        if (mutedLinks.remove(link)) mutedSnapshot = mutedLinks.toSet()
+        speakingLinks = speakingLinks - link
         publishLinks()
         if (links.isEmpty() && _state.value.phase == RidePhase.Riding) {
             _state.value = _state.value.copy(phase = RidePhase.WaitingForPeers)
@@ -330,6 +372,107 @@ class Ride(
     private fun publishLinks() {
         voiceLinks = links.keys.toList()
         _state.value = _state.value.copy(links = links.values.toList())
+        publishRoster()
+    }
+
+    // --- Group roster ----------------------------------------------------------------------
+
+    private fun onSetHostMuted(riderId: Int, muted: Boolean) {
+        if (_state.value.role != RideRole.HOST) return
+        val link = links.keys.firstOrNull { riderIdOf(it) == riderId } ?: return
+        val changed = if (muted) mutedLinks.add(link) else mutedLinks.remove(link)
+        if (!changed) return
+        log("Rider $riderId ${if (muted) "muted" else "unmuted"} by the Host")
+        mutedSnapshot = mutedLinks.toSet()
+        publishRoster()
+    }
+
+    private fun onRemove(riderId: Int) {
+        if (_state.value.role != RideRole.HOST) return
+        val link = links.keys.firstOrNull { riderIdOf(it) == riderId } ?: return
+        log("Rider $riderId removed by the Host")
+        link.remove()
+        dropLink(link)
+    }
+
+    private fun onSpeaking(hostTalking: Boolean, talking: Set<PeerLink>) {
+        val nowTalking = talking.filterTo(HashSet()) { it in links }
+        if (hostTalking == hostSpeaking && nowTalking == speakingLinks) return
+        hostSpeaking = hostTalking
+        speakingLinks = nowTalking
+        publishRoster()
+    }
+
+    private fun riderIdOf(link: PeerLink): Int =
+        link.riderId.takeIf { it >= 0 } ?: if (link.kind == LinkKind.SAFARI) SAFARI_RIDER_ID else 1
+
+    private fun riderNameOf(link: PeerLink): String =
+        link.riderName.ifBlank { if (link.kind == LinkKind.SAFARI) "iPhone" else "Rider" }
+
+    /** Host: rebuilds the roster into state and sends it to every rider if it changed. */
+    private fun publishRoster() {
+        val s = _state.value
+        if (s.role != RideRole.HOST) return
+        val roster = buildList {
+            add(RosterRider(0, hostRiderName(), isHost = true, isYou = true, speaking = hostSpeaking, onCall = localOnCall))
+            links.forEach { (link, ride) ->
+                add(
+                    RosterRider(
+                        riderId = riderIdOf(link),
+                        name = riderNameOf(link),
+                        isHost = false,
+                        isYou = false,
+                        isSafari = link.kind == LinkKind.SAFARI,
+                        reconnecting = ride.status == LinkStatus.RECONNECTING,
+                        speaking = link in speakingLinks,
+                        onCall = ride.onCall,
+                        hostMuted = link in mutedLinks
+                    )
+                )
+            }
+        }
+        if (roster != s.roster) _state.value = s.copy(roster = roster)
+        sendRoster(force = false)
+    }
+
+    /** Host: sends the roster to every rider; [force] resends unchanged (the once-a-second refresh). */
+    private fun sendRoster(force: Boolean) {
+        if (_state.value.role != RideRole.HOST || links.isEmpty()) return
+        val entries = _state.value.roster.map { it.toEntry() }
+        if (!force && entries == lastSentRoster) return
+        if (entries != lastSentRoster) rosterVersion = (rosterVersion + 1) and 0xFF
+        lastSentRoster = entries
+        val sync = RosterSync(rosterVersion, entries)
+        links.keys.forEach { it.sendRoster(sync) }
+    }
+
+    private fun RosterRider.toEntry(): RosterEntry {
+        var flags = if (reconnecting) RosterEntry.RECONNECTING else RosterEntry.CONNECTED
+        if (speaking) flags = flags or RosterEntry.SPEAKING
+        if (onCall) flags = flags or RosterEntry.ON_CALL
+        if (hostMuted) flags = flags or RosterEntry.HOST_MUTED
+        if (isHost) flags = flags or RosterEntry.HOST
+        if (isSafari) flags = flags or RosterEntry.SAFARI
+        return RosterEntry(riderId, name, flags)
+    }
+
+    /** Peer: the Host's roster arrived; show it with this phone's own entry marked. */
+    private fun onRoster(roster: RosterSync, yourId: Int) {
+        if (_state.value.role != RideRole.PEER) return
+        val riders = roster.entries.map {
+            RosterRider(
+                riderId = it.senderId,
+                name = it.name,
+                isHost = it.has(RosterEntry.HOST),
+                isYou = !it.has(RosterEntry.HOST) && it.senderId == yourId,
+                isSafari = it.has(RosterEntry.SAFARI),
+                reconnecting = it.has(RosterEntry.RECONNECTING),
+                speaking = it.has(RosterEntry.SPEAKING),
+                onCall = it.has(RosterEntry.ON_CALL),
+                hostMuted = it.has(RosterEntry.HOST_MUTED)
+            )
+        }
+        if (riders != _state.value.roster) _state.value = _state.value.copy(roster = riders)
     }
 
     // --- Stats -----------------------------------------------------------------------------
@@ -338,6 +481,7 @@ class Ride(
         statsTimer = scheduler.postDelayed(STATS_INTERVAL_MS) {
             if (myEpoch != epoch) return@postDelayed
             _stats.value = RideStats(links.keys.map { RideLinkStats(it.kind, it.stats()) })
+            sendRoster(force = true)
             startStatsTimer(myEpoch)
         }
     }
@@ -388,6 +532,13 @@ class Ride(
         }
 
         override fun onRejected(link: PeerLink, reason: String) = onScheduler(myEpoch) { fail(reason) }
+
+        override fun onRoster(link: PeerLink, roster: RosterSync, yourId: Int) =
+            onScheduler(myEpoch) { this@Ride.onRoster(roster, yourId) }
+
+        override fun onRemoved(link: PeerLink) = onScheduler(myEpoch) {
+            if (_state.value.role == RideRole.PEER) finishIdle(RideOutcome.RemovedByHost)
+        }
     }
 
     companion object {

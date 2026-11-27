@@ -59,6 +59,8 @@ class RideVoice(
 
         override fun codecFor(rider: Any): Byte = (rider as PeerLink).codecId
 
+        override fun isMuted(rider: Any): Boolean = ride.isHostMuted(rider as PeerLink)
+
         override fun send(rider: Any, bytes: ByteArray, offset: Int, length: Int, codecId: Byte) {
             ride.sendVoiceTo(rider as PeerLink, bytes, offset, length)
         }
@@ -84,6 +86,9 @@ class RideVoice(
 
     /** Stops the pipeline once a goodbye chime has had time to play; cancelled if a ride starts. */
     private var deferredStop: Job? = null
+
+    /** While hosting: reports who's speaking to the Ride a few times a second, for the roster. */
+    private var speakingReporter: Job? = null
 
     val jitterDepthFrames: Int
         get() = engine.jitterBuffer.currentDepthFrames
@@ -191,6 +196,7 @@ class RideVoice(
         pipelineStarted = true
         // The Host mixes per rider (mix-minus); a Peer plays the Host's one stream.
         engine.groupMixing = if (role == RideRole.HOST) hostMixing else null
+        if (role == RideRole.HOST) startSpeakingReporter()
         headset.start()
         engine.setNoiseGateThreshold(talk.state.value.micGateThresholdRms)
         engine.start()
@@ -201,10 +207,28 @@ class RideVoice(
     private fun stopPipeline() {
         if (!pipelineStarted) return
         pipelineStarted = false
+        speakingReporter?.cancel()
+        speakingReporter = null
         buttons.stop()
         callHandler.stop()
         engine.stop()
         headset.stop()
+    }
+
+    private fun startSpeakingReporter() {
+        speakingReporter?.cancel()
+        speakingReporter = scope.launch {
+            var last: Pair<Boolean, Set<Any>>? = null
+            while (true) {
+                val now = engine.groupSpeaking()
+                if (now != last) {
+                    last = now
+                    @Suppress("UNCHECKED_CAST")
+                    ride.reportSpeaking(now.first, now.second as Set<PeerLink>)
+                }
+                delay(SPEAKING_REPORT_MS)
+            }
+        }
     }
 
     private fun onLocalCallChanged(callActive: Boolean) {
@@ -224,5 +248,7 @@ class RideVoice(
     private companion object {
         /** LINK_LOST is 250 ms; the rest covers AudioTrack buffering. */
         const val GOODBYE_CHIME_MS = 700L
+
+        const val SPEAKING_REPORT_MS = 250L
     }
 }

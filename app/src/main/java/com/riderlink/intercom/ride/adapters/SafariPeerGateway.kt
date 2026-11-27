@@ -7,6 +7,7 @@ import com.riderlink.intercom.ride.LinkStats
 import com.riderlink.intercom.ride.PeerControl
 import com.riderlink.intercom.ride.PeerGateway
 import com.riderlink.intercom.ride.PeerLink
+import com.riderlink.intercom.ride.SAFARI_RIDER_ID
 import com.riderlink.intercom.web.LocalWebBridgeServer
 import java.io.InputStream
 import java.util.concurrent.ExecutorService
@@ -16,6 +17,7 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.security.SecureRandom
 
 /**
  * Host side: accepts one Safari peer through [LocalWebBridgeServer] (HTTPS page + WSS voice).
@@ -47,6 +49,11 @@ class SafariPeerGateway(
 
     private inner class Session(val events: LinkEvents) : PeerLink {
         override val kind = LinkKind.SAFARI
+        override val riderId: Int = SAFARI_RIDER_ID
+        override val riderName: String = "iPhone"
+
+        /** Set when the Host removed this iPhone; its page can't reconnect for the rest of the ride. */
+        val removed = AtomicBoolean(false)
         val sequence = AtomicLong(0L)
         val received = AtomicLong(0L)
         val saidGoodbye = AtomicBoolean(false)
@@ -75,6 +82,15 @@ class SafariPeerGateway(
         }
 
         override fun stats() = LinkStats(rttMs = rttMs, packetsReceived = received.get(), address = address)
+
+        override fun remove() {
+            if (!removed.compareAndSet(false, true)) return
+            io.execute {
+                server.sendTextControl("ctrl:goodbye")
+                // A token nobody holds: the page's automatic reconnect is refused until the ride ends.
+                server.updateSessionToken(10_000 + SecureRandom().nextInt(50_000))
+            }
+        }
     }
 
     private val server = LocalWebBridgeServer(
@@ -83,7 +99,7 @@ class SafariPeerGateway(
         loadHtmlBytes = loadHtmlBytes,
         listener = object : LocalWebBridgeServer.Listener {
             override fun onClientConnected(clientIp: String) {
-                val s = session ?: return
+                val s = session?.takeUnless { it.removed.get() } ?: return
                 s.sequence.set(0L)
                 s.saidGoodbye.set(false)
                 s.address = clientIp
@@ -91,7 +107,7 @@ class SafariPeerGateway(
             }
 
             override fun onAudioFrame(pcmBytes: ByteArray, offset: Int, length: Int) {
-                val s = session ?: return
+                val s = session?.takeUnless { it.removed.get() } ?: return
                 s.received.incrementAndGet()
                 s.events.onVoice(s, CodecId.PCM16_16K, s.sequence.incrementAndGet(), pcmBytes, offset, length)
             }
@@ -102,7 +118,7 @@ class SafariPeerGateway(
             }
 
             override fun onClientControl(message: String) {
-                val s = session ?: return
+                val s = session?.takeUnless { it.removed.get() } ?: return
                 when (message) {
                     "ctrl:goodbye" -> {
                         s.saidGoodbye.set(true)
@@ -114,7 +130,7 @@ class SafariPeerGateway(
             }
 
             override fun onClientDisconnected() {
-                val s = session ?: return
+                val s = session?.takeUnless { it.removed.get() } ?: return
                 // A goodbye already removed the link; the socket closing after it is not a dropout.
                 if (!s.saidGoodbye.get()) s.events.onReconnecting(s)
             }

@@ -66,6 +66,7 @@ class RiderLinkApp : Application() {
             voiceReceiver = { link, codecId, sequence, bytes, offset, length ->
                 voice.onVoice(link, codecId, sequence, bytes, offset, length)
             },
+            hostRiderName = { profile.displayName },
             log = { Log.i(TAG, it) }
         )
         voice = RideVoice(this, ride, appScope)

@@ -33,6 +33,12 @@ object ControlCode {
 
     /** Phase 2 group join: Host → Peer, payload [JoinAck]. */
     const val JOIN_ACK: Byte = 0x11
+
+    /** Host → Peers, payload [RosterSync]: who is in the group and what each rider is doing. */
+    const val ROSTER_SYNC: Byte = 0x12
+
+    /** Host → one Peer, no payload: you were removed from this ride. */
+    const val HOST_KICK_PEER: Byte = 0x14
 }
 
 object CodecId {

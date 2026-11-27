@@ -90,8 +90,22 @@ data class RideLink(
 sealed interface RideOutcome {
     data object EndedByYou : RideOutcome
     data object EndedByHost : RideOutcome
+    data object RemovedByHost : RideOutcome
     data class Failed(val message: String) : RideOutcome
 }
+
+/** One Rider in the group as this phone shows it. The Host's own entry has [riderId] 0. */
+data class RosterRider(
+    val riderId: Int,
+    val name: String,
+    val isHost: Boolean,
+    val isYou: Boolean,
+    val isSafari: Boolean = false,
+    val reconnecting: Boolean = false,
+    val speaking: Boolean = false,
+    val onCall: Boolean = false,
+    val hostMuted: Boolean = false
+)
 
 data class RideState(
     val phase: RidePhase = RidePhase.Idle,
@@ -101,11 +115,16 @@ data class RideState(
     val invitation: PairingInvitation? = null,
     val links: List<RideLink> = emptyList(),
     /** Set when [phase] is Idle after a ride. */
-    val lastOutcome: RideOutcome? = null
+    val lastOutcome: RideOutcome? = null,
+    /** Everyone in the ride, this phone included. Built by the Host; a Peer shows the Host's copy. */
+    val roster: List<RosterRider> = emptyList()
 ) {
     val isIdle: Boolean get() = phase == RidePhase.Idle
     val anyLinked: Boolean get() = links.any { it.status == LinkStatus.LINKED }
     val anyOnCall: Boolean get() = links.any { it.onCall }
+
+    /** Peer side: the Host muted this phone's rider (its voice isn't relayed). */
+    val youAreHostMuted: Boolean get() = roster.any { it.isYou && it.hostMuted }
 }
 
 data class RideLinkStats(

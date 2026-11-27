@@ -7,6 +7,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.widget.SeekBar
+import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -17,12 +19,14 @@ import com.riderlink.intercom.R
 import com.riderlink.intercom.RiderLinkApp
 import com.riderlink.intercom.databinding.ActivityRideBinding
 import com.riderlink.intercom.oem.BatteryOptimizationHelper
+import com.riderlink.intercom.ride.LinkKind
 import com.riderlink.intercom.ride.LinkStatus
 import com.riderlink.intercom.ride.RideOutcome
 import com.riderlink.intercom.ride.RidePhase
 import com.riderlink.intercom.ride.RideRole
 import com.riderlink.intercom.ride.RideState
 import com.riderlink.intercom.ride.RideStats
+import com.riderlink.intercom.ride.RosterRider
 import com.riderlink.intercom.service.AudioRouteState
 import com.riderlink.intercom.service.AudioRouteType
 import com.riderlink.intercom.service.TalkControlState
@@ -36,6 +40,7 @@ class RideActivity : AppCompatActivity() {
     private lateinit var diagnosticsDrawer: LiveDiagnosticsDrawer
     private val app by lazy { RiderLinkApp.from(this) }
     private var leaving = false
+    private var shownRoster: List<RosterRider>? = null
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -136,8 +141,12 @@ class RideActivity : AppCompatActivity() {
                 ) { ride, stats, route, talk -> Snapshot(ride, stats, route, talk) }
                     .collect { s ->
                         if (s.ride.isIdle) {
-                            if (s.ride.lastOutcome == RideOutcome.EndedByHost) {
-                                Toast.makeText(this@RideActivity, "The Host ended the ride.", Toast.LENGTH_LONG).show()
+                            when (s.ride.lastOutcome) {
+                                RideOutcome.EndedByHost ->
+                                    Toast.makeText(this@RideActivity, "The Host ended the ride.", Toast.LENGTH_LONG).show()
+                                RideOutcome.RemovedByHost ->
+                                    Toast.makeText(this@RideActivity, R.string.toast_removed_by_host, Toast.LENGTH_LONG).show()
+                                else -> Unit
                             }
                             goHome()
                             return@collect
@@ -148,6 +157,7 @@ class RideActivity : AppCompatActivity() {
                             return@collect
                         }
                         renderCockpit(s.ride, s.stats, s.route, s.talk)
+                        renderRoster(s.ride)
                         diagnosticsDrawer.render(
                             s.ride,
                             s.stats,
@@ -234,10 +244,13 @@ class RideActivity : AppCompatActivity() {
         val alertText = when {
             talk.isLocalCallPaused -> getString(R.string.warn_local_on_call)
             talk.isPeerOnCall -> getString(R.string.warn_peer_on_call)
+            ride.youAreHostMuted -> getString(R.string.warn_you_are_host_muted)
             phase is RidePhase.NetworkLost -> "${phase.message} Tap here to try again."
             phase is RidePhase.Failed -> "${phase.message} Tap here to try again."
             ride.links.isNotEmpty() && !ride.anyLinked -> getString(R.string.warn_reconnecting)
             route.isSpeakerFallback -> getString(R.string.warn_speaker_fallback)
+            ride.role == RideRole.HOST && ride.links.count { it.kind == LinkKind.ANDROID } > CROWDED_AFTER_PEERS ->
+                getString(R.string.warn_group_crowded, ride.links.count { it.kind == LinkKind.ANDROID } + 1)
             else -> null
         }
         if (alertText != null) {
@@ -281,6 +294,64 @@ class RideActivity : AppCompatActivity() {
         }
     }
 
+    /** The group roster: one row per rider; on the Host, tapping a rider offers Mute and Remove. */
+    private fun renderRoster(ride: RideState) {
+        val roster = ride.roster
+        if (roster == shownRoster) return
+        shownRoster = roster
+        binding.panelRoster.visibility = if (roster.size > 1) View.VISIBLE else View.GONE
+        val list = binding.rosterList
+        list.removeAllViews()
+        for (rider in roster) {
+            val badges = buildList {
+                if (rider.speaking) add(getString(R.string.roster_speaking))
+                if (rider.reconnecting) add(getString(R.string.roster_reconnecting))
+                if (rider.onCall) add(getString(R.string.roster_on_call))
+                if (rider.hostMuted) add(getString(R.string.roster_muted))
+            }
+            val name = when {
+                rider.isYou -> getString(R.string.roster_you, rider.name)
+                rider.isHost -> getString(R.string.roster_host, rider.name)
+                else -> rider.name
+            }
+            val color = when {
+                rider.hostMuted -> R.color.ink_slate
+                rider.reconnecting -> R.color.signal_amber
+                rider.speaking -> R.color.live_emerald
+                else -> R.color.ink_white
+            }
+            val row = TextView(this).apply {
+                text = if (badges.isEmpty()) "● $name" else "● $name · ${badges.joinToString(" · ")}"
+                setTextColor(ContextCompat.getColor(context, color))
+                textSize = 16f
+                minHeight = (40 * resources.displayMetrics.density).toInt()
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+            if (ride.role == RideRole.HOST && !rider.isYou) {
+                row.setOnClickListener { offerHostActions(rider) }
+            }
+            list.addView(row)
+        }
+    }
+
+    private fun offerHostActions(rider: RosterRider) {
+        val muteLabel = getString(
+            if (rider.hostMuted) R.string.roster_action_unmute else R.string.roster_action_mute,
+            rider.name
+        )
+        val removeLabel = getString(R.string.roster_action_remove, rider.name)
+        AlertDialog.Builder(this)
+            .setTitle(rider.name)
+            .setItems(arrayOf(muteLabel, removeLabel)) { _, which ->
+                when (which) {
+                    0 -> app.ride.setHostMuted(rider.riderId, !rider.hostMuted)
+                    1 -> app.ride.remove(rider.riderId)
+                }
+            }
+            .setNegativeButton(R.string.close_label, null)
+            .show()
+    }
+
     private fun formatWindGate(rms: Int): String = when {
         rms <= 0 -> "Off"
         rms < 450 -> "Low ($rms)"
@@ -294,4 +365,9 @@ class RideActivity : AppCompatActivity() {
         val route: AudioRouteState,
         val talk: TalkControlState
     )
+
+    private companion object {
+        /** Above this many Android Peers the Host suggests the Wi-Fi may get crowded (spec: 6 phones is the sweet spot). */
+        const val CROWDED_AFTER_PEERS = 5
+    }
 }

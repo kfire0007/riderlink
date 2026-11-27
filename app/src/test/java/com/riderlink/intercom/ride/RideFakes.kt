@@ -90,7 +90,13 @@ class FakeSharedWifi(
     override fun currentNetwork(): JoinedNetwork? = current
 }
 
-class FakeLink(override val kind: LinkKind) : PeerLink {
+class FakeLink(
+    override val kind: LinkKind,
+    override val riderId: Int = -1,
+    override val riderName: String = ""
+) : PeerLink {
+    val rostersSent = mutableListOf<com.riderlink.intercom.protocol.RosterSync>()
+    var removedCount = 0
     val voiceSent = mutableListOf<ByteArray>()
     val controlsSent = mutableListOf<PeerControl>()
     var goodbyes = 0
@@ -109,6 +115,14 @@ class FakeLink(override val kind: LinkKind) : PeerLink {
     }
 
     override fun stats(): LinkStats = linkStats
+
+    override fun sendRoster(roster: com.riderlink.intercom.protocol.RosterSync) {
+        rostersSent += roster
+    }
+
+    override fun remove() {
+        removedCount++
+    }
 }
 
 class FakeGateway(
@@ -140,6 +154,10 @@ class FakeGateway(
     fun goodbye() = events!!.onGoodbye(link)
     fun control(c: PeerControl) = events!!.onControl(link, c)
     fun voice(seq: Long, bytes: ByteArray) = events!!.onVoice(link, link.codecId, seq, bytes, 0, bytes.size)
+
+    /** A group Host: another rider joins this gateway as its own link. */
+    fun riderJoins(id: Int, name: String): FakeLink = FakeLink(kind, id, name).also { events!!.onLinked(it) }
+    fun riderLeaves(rider: FakeLink) = events!!.onGoodbye(rider)
 }
 
 class FakeDialer : HostDialer {
@@ -174,6 +192,8 @@ class FakeDialer : HostDialer {
     fun reconnecting() = events!!.onReconnecting(link)
     fun goodbye() = events!!.onGoodbye(link)
     fun control(c: PeerControl) = events!!.onControl(link, c)
+    fun roster(sync: com.riderlink.intercom.protocol.RosterSync, yourId: Int) = events!!.onRoster(link, sync, yourId)
+    fun removed() = events!!.onRemoved(link)
 }
 
 class RecordingVoiceReceiver : VoiceReceiver {
