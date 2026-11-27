@@ -56,7 +56,7 @@ class RideActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityRideBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        PermissionHelper.applySystemBarInsets(binding.root)
+        binding.root.applySystemBarInsets()
 
         diagnosticsDrawer = LiveDiagnosticsDrawer(this, binding.diagnosticsDrawer)
 
@@ -92,7 +92,9 @@ class RideActivity : AppCompatActivity() {
             } else {
                 TalkMode.PUSH_TO_TALK
             }
-            service?.setTalkMode(mode)
+            if (service?.talkControlState?.value?.mode != mode) {
+                service?.setTalkMode(mode)
+            }
         }
 
         binding.seekWindGate.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -211,10 +213,22 @@ class RideActivity : AppCompatActivity() {
             )
         )
 
-        // Mode pill
+        // Mode pill & toggle sync
         binding.txtPillMode.setText(
             if (talk.mode == TalkMode.HANDS_FREE) R.string.mode_hands_free else R.string.mode_ptt
         )
+        val desiredToggleId = if (talk.mode == TalkMode.HANDS_FREE) {
+            R.id.btnModeHandsFree
+        } else {
+            R.id.btnModePtt
+        }
+        if (binding.toggleTalkMode.checkedButtonId != desiredToggleId) {
+            binding.toggleTalkMode.check(desiredToggleId)
+        }
+        if (binding.seekWindGate.progress != talk.micGateThresholdRms) {
+            binding.seekWindGate.progress = talk.micGateThresholdRms
+            binding.txtWindGateValue.text = formatWindGate(talk.micGateThresholdRms)
+        }
 
         // Alert strip priority: local call > peer call > reconnecting > speaker fallback
         val alertText = when {

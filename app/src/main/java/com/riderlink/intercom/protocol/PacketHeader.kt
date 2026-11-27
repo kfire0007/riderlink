@@ -24,8 +24,6 @@ object PacketType {
 }
 
 object ControlCode {
-    const val PEER_MUTED: Byte = 0x01
-    const val PEER_UNMUTED: Byte = 0x02
     const val PEER_ON_CALL: Byte = 0x03
     const val PEER_CALL_ENDED: Byte = 0x04
     const val GOODBYE: Byte = 0x05

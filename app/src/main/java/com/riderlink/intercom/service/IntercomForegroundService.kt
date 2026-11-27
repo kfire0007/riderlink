@@ -1,22 +1,15 @@
 package com.riderlink.intercom.service
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.net.wifi.WifiManager
+import android.net.Network
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
-import androidx.core.app.NotificationCompat
+import android.util.Log
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.riderlink.intercom.R
@@ -32,8 +25,6 @@ import com.riderlink.intercom.oem.BatteryOptimizationHelper
 import com.riderlink.intercom.protocol.ControlCode
 import com.riderlink.intercom.protocol.PacketHeader
 import com.riderlink.intercom.protocol.QrPayload
-import com.riderlink.intercom.ui.HomeActivity
-import com.riderlink.intercom.ui.RideActivity
 import com.riderlink.intercom.web.LocalWebBridgeServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,8 +39,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Foreground service owning RiderLink's connection controller, full-duplex audio engine,
- * headset routing, cellular call pause/resume, hardware button triggers, WakeLock, and WifiLock.
+ * Foreground service coordinating ConnectionController, IntercomAudioEngine,
+ * headset routing, cellular call pause/resume, hardware buttons, notifications, and wake locks.
  */
 class IntercomForegroundService : Service() {
 
@@ -59,8 +50,7 @@ class IntercomForegroundService : Service() {
         val wifiLockHeld: Boolean = false,
         val isMuted: Boolean = false,
         val isBatteryExempt: Boolean = false,
-        val jitterDepthFrames: Int = 0,
-        val isLocalVoiceActive: Boolean = false
+        val jitterDepthFrames: Int = 0
     )
 
     inner class LocalBinder : Binder() {
@@ -76,12 +66,13 @@ class IntercomForegroundService : Service() {
     private lateinit var callHandler: PhoneCallInterruptionHandler
     private lateinit var hardwareButtons: HardwareButtonController
     private lateinit var webBridgeServer: LocalWebBridgeServer
+    private lateinit var notificationController: NotificationController
+    private lateinit var lockManager: SessionLockManager
     private val talkModeController = TalkModeController()
 
-    private var wakeLock: PowerManager.WakeLock? = null
-    private var wifiLock: WifiManager.WifiLock? = null
     private var statsRefreshJob: Job? = null
     private var webHostObserverJob: Job? = null
+    private var webStartJob: Job? = null
     private var audioPipelineStarted = false
     private var hasConnectedOnce = false
     private var webRxSeq = 0L
@@ -107,7 +98,8 @@ class IntercomForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        notificationController = NotificationController(this).apply { createChannel() }
+        lockManager = SessionLockManager(this)
 
         audioEngine = IntercomAudioEngine(
             shouldTransmit = { talkModeController.shouldTransmitMic() },
@@ -143,8 +135,8 @@ class IntercomForegroundService : Service() {
                     audioEngine.onIncomingAudio(webRxSeq, pcmBytes, offset, length)
                 }
 
-                override fun onHeartbeat(rttMs: Long) {
-                    if (rttMs > 0L) lastWebRttMs = rttMs
+                override fun onHeartbeat(rttMs: Long?) {
+                    if (rttMs != null) lastWebRttMs = rttMs
                     connectionController.updateWebBridgeStats(lastWebRttMs, webRxSeq)
                 }
 
@@ -194,6 +186,12 @@ class IntercomForegroundService : Service() {
                             talkModeController.setPeerOnCall(false)
                             audioEngine.playChime(ChimeType.RECONNECTED)
                         }
+                        ControlCode.GOODBYE -> {
+                            if (audioPipelineStarted) {
+                                audioEngine.remoteAudioMuted = true
+                                audioEngine.playChime(ChimeType.LINK_LOST)
+                            }
+                        }
                     }
                 }
 
@@ -205,15 +203,22 @@ class IntercomForegroundService : Service() {
                 }
             }
         )
+
         refreshDiagnostics()
+        webHostObserverJob?.cancel()
         webHostObserverJob = serviceScope.launch {
             connectionController.connectionState.collect { state ->
                 if (state is ConnectionState.HostReady) {
-                    runCatching {
-                        webBridgeServer.start(
-                            port = LocalWebBridgeServer.DEFAULT_HTTPS_PORT,
-                            sessionToken = state.qrPayload.sessionToken
-                        )
+                    webStartJob?.cancel()
+                    webStartJob = serviceScope.launch(Dispatchers.IO) {
+                        runCatching {
+                            webBridgeServer.start(
+                                port = LocalWebBridgeServer.DEFAULT_HTTPS_PORT,
+                                sessionToken = state.qrPayload.sessionToken
+                            )
+                        }.onFailure { err ->
+                            Log.w(TAG, "LocalWebBridgeServer start failed: ${err.message}")
+                        }
                     }
                 }
             }
@@ -224,8 +229,7 @@ class IntercomForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP_RIDE) {
-            stopSession()
-            stopSelf()
+            stopSession(stopService = true)
             return START_NOT_STICKY
         }
         if (!_diagnostics.value.isRunning) {
@@ -255,23 +259,19 @@ class IntercomForegroundService : Service() {
         startStatsRefreshLoop()
     }
 
-    fun joinViaManualLan(hostIp: String, port: Int, sessionToken: Int) {
+    fun joinViaManualLan(
+        hostIp: String,
+        port: Int,
+        sessionToken: Int,
+        boundNetwork: Network? = null
+    ) {
         prepareSessionStart()
-        connectionController.joinViaManualLan(hostIp, port, sessionToken)
+        connectionController.joinViaManualLan(hostIp, port, sessionToken, boundNetwork)
         startStatsRefreshLoop()
     }
 
     fun setTalkMode(mode: TalkMode) {
         talkModeController.setTalkMode(mode)
-        updateNotification()
-    }
-
-    fun setMuted(muted: Boolean) {
-        talkModeController.setMuted(muted)
-        _diagnostics.value = _diagnostics.value.copy(isMuted = muted)
-        if (audioPipelineStarted) {
-            audioEngine.playChime(if (muted) ChimeType.MUTED else ChimeType.UNMUTED)
-        }
         updateNotification()
     }
 
@@ -306,18 +306,6 @@ class IntercomForegroundService : Service() {
 
     fun refreshBatteryStatus() {
         refreshDiagnostics()
-        webHostObserverJob = serviceScope.launch {
-            connectionController.connectionState.collect { state ->
-                if (state is ConnectionState.HostReady) {
-                    runCatching {
-                        webBridgeServer.start(
-                            port = LocalWebBridgeServer.DEFAULT_HTTPS_PORT,
-                            sessionToken = state.qrPayload.sessionToken
-                        )
-                    }
-                }
-            }
-        }
     }
 
     fun handleHardwareKeyDown(keyCode: Int, repeatCount: Int): Boolean =
@@ -326,9 +314,15 @@ class IntercomForegroundService : Service() {
     fun handleHardwareKeyUp(keyCode: Int): Boolean =
         hardwareButtons.onKeyUp(keyCode)
 
-    fun stopSession() {
+    fun stopSession(stopService: Boolean = true) {
+        connectionController.transport?.sendControl(ControlCode.GOODBYE)
+        webBridgeServer.sendTextControl("ctrl:goodbye")
+
+        webStartJob?.cancel()
+        webStartJob = null
         statsRefreshJob?.cancel()
         statsRefreshJob = null
+
         webBridgeServer.stop()
         stopAudioPipeline()
         connectionController.stop()
@@ -336,18 +330,21 @@ class IntercomForegroundService : Service() {
         hasConnectedOnce = false
         webRxSeq = 0L
         lastWebRttMs = 0L
-        releaseLocks()
+        lockManager.release()
+        refreshDiagnostics()
         _diagnostics.value = _diagnostics.value.copy(
             isRunning = false,
-            isMuted = false,
-            isBatteryExempt = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(this)
+            isMuted = false
         )
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        if (stopService) {
+            stopSelf()
+        }
     }
 
     override fun onDestroy() {
         webHostObserverJob?.cancel()
-        stopSession()
+        stopSession(stopService = false)
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -356,7 +353,8 @@ class IntercomForegroundService : Service() {
         hasConnectedOnce = false
         talkModeController.reset()
         promoteToForeground()
-        acquireLocks()
+        lockManager.acquire()
+        refreshDiagnostics()
     }
 
     private fun handleLinkStateChange(state: LinkState) {
@@ -376,6 +374,7 @@ class IntercomForegroundService : Service() {
             LinkState.RECONNECTING -> {
                 if (audioPipelineStarted) {
                     audioEngine.remoteAudioMuted = true
+                    audioEngine.resetJitterBuffer()
                     audioEngine.playChime(ChimeType.LINK_LOST)
                 }
             }
@@ -410,6 +409,7 @@ class IntercomForegroundService : Service() {
         if (isCallActive) {
             talkModeController.setLocalCallPaused(true)
             connectionController.transport?.sendControl(ControlCode.PEER_ON_CALL)
+            webBridgeServer.sendTextControl("ctrl:peer_on_call")
             audioEngine.setPausedForCall(true)
             headsetRouteManager.suspendForCellularCall()
         } else {
@@ -417,11 +417,16 @@ class IntercomForegroundService : Service() {
             audioEngine.setPausedForCall(false)
             talkModeController.setLocalCallPaused(false)
             connectionController.transport?.sendControl(ControlCode.PEER_CALL_ENDED)
+            webBridgeServer.sendTextControl("ctrl:peer_call_ended")
         }
     }
 
     private fun promoteToForeground() {
-        val notification = buildNotification()
+        val notification = notificationController.build(
+            isConnected = connectionController.connectionState.value is ConnectionState.Connected,
+            linkState = connectionController.transportStats.value.linkState,
+            isMuted = _diagnostics.value.isMuted
+        )
         val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             val hasMic = ContextCompat.checkSelfPermission(
@@ -435,75 +440,11 @@ class IntercomForegroundService : Service() {
         } else {
             0
         }
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceType)
+        ServiceCompat.startForeground(this, NotificationController.NOTIFICATION_ID, notification, serviceType)
         _diagnostics.value = _diagnostics.value.copy(
             isRunning = true,
             isBatteryExempt = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(this)
         )
-    }
-
-    @SuppressLint("WakelockTimeout")
-    private fun acquireLocks() {
-        if (wakeLock == null) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RiderLink:IntercomWakeLock").apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-        }
-        if (wifiLock == null) {
-            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-            } else {
-                @Suppress("DEPRECATION")
-                WifiManager.WIFI_MODE_FULL_HIGH_PERF
-            }
-            wifiLock = wm.createWifiLock(mode, "RiderLink:IntercomWifiLock").apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-        }
-        refreshDiagnostics()
-        webHostObserverJob = serviceScope.launch {
-            connectionController.connectionState.collect { state ->
-                if (state is ConnectionState.HostReady) {
-                    runCatching {
-                        webBridgeServer.start(
-                            port = LocalWebBridgeServer.DEFAULT_HTTPS_PORT,
-                            sessionToken = state.qrPayload.sessionToken
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private fun releaseLocks() {
-        try {
-            if (wakeLock?.isHeld == true) wakeLock?.release()
-        } catch (_: Exception) {
-        }
-        wakeLock = null
-
-        try {
-            if (wifiLock?.isHeld == true) wifiLock?.release()
-        } catch (_: Exception) {
-        }
-        wifiLock = null
-        refreshDiagnostics()
-        webHostObserverJob = serviceScope.launch {
-            connectionController.connectionState.collect { state ->
-                if (state is ConnectionState.HostReady) {
-                    runCatching {
-                        webBridgeServer.start(
-                            port = LocalWebBridgeServer.DEFAULT_HTTPS_PORT,
-                            sessionToken = state.qrPayload.sessionToken
-                        )
-                    }
-                }
-            }
-        }
     }
 
     private fun startStatsRefreshLoop() {
@@ -522,96 +463,24 @@ class IntercomForegroundService : Service() {
 
     private fun refreshDiagnostics() {
         _diagnostics.value = _diagnostics.value.copy(
-            wakeLockHeld = wakeLock?.isHeld == true,
-            wifiLockHeld = wifiLock?.isHeld == true,
+            wakeLockHeld = lockManager.isWakeLockHeld,
+            wifiLockHeld = lockManager.isWifiLockHeld,
             isBatteryExempt = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(this),
-            jitterDepthFrames = if (::audioEngine.isInitialized) audioEngine.jitterBuffer.currentDepthFrames else 0,
-            isLocalVoiceActive = if (::audioEngine.isInitialized) audioEngine.isLocalVoiceActive else false
+            jitterDepthFrames = if (::audioEngine.isInitialized) audioEngine.jitterBuffer.currentDepthFrames else 0
         )
-    }
-
-    private fun createNotificationChannel() {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.notif_channel_name),
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = getString(R.string.notif_channel_desc)
-            setShowBadge(false)
-        }
-        manager.createNotificationChannel(channel)
     }
 
     private fun updateNotification() {
         if (!_diagnostics.value.isRunning) return
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification())
-    }
-
-    private fun buildNotification(): Notification {
-        val targetActivity = if (connectionController.connectionState.value is ConnectionState.Connected) {
-            RideActivity::class.java
-        } else {
-            HomeActivity::class.java
-        }
-        val launchIntent = Intent(this, targetActivity).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        val contentPending = PendingIntent.getActivity(
-            this,
-            0,
-            launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        notificationController.update(
+            isConnected = connectionController.connectionState.value is ConnectionState.Connected,
+            linkState = connectionController.transportStats.value.linkState,
+            isMuted = _diagnostics.value.isMuted
         )
-
-        val muteIntent = Intent(this, IntercomForegroundService::class.java).apply {
-            action = ACTION_TOGGLE_MUTE
-        }
-        val mutePending = PendingIntent.getService(
-            this,
-            1,
-            muteIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val stopIntent = Intent(this, IntercomForegroundService::class.java).apply {
-            action = ACTION_STOP_RIDE
-        }
-        val stopPending = PendingIntent.getService(
-            this,
-            2,
-            stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val linkText = when (connectionController.transportStats.value.linkState) {
-            LinkState.CONNECTED -> getString(R.string.notif_state_connected)
-            LinkState.RECONNECTING -> getString(R.string.notif_state_reconnecting)
-            LinkState.WAITING_FOR_PEER -> getString(R.string.notif_state_waiting)
-            else -> getString(R.string.notif_state_ready)
-        }
-        val muteLabel = if (_diagnostics.value.isMuted) {
-            getString(R.string.notif_action_unmute)
-        } else {
-            getString(R.string.notif_action_mute)
-        }
-
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText(linkText)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(contentPending)
-            .addAction(0, muteLabel, mutePending)
-            .addAction(0, getString(R.string.notif_action_stop), stopPending)
-            .build()
     }
 
     companion object {
-        const val CHANNEL_ID = "riderlink_intercom_channel"
-        const val NOTIFICATION_ID = 1001
+        private const val TAG = "RiderLink"
         const val ACTION_TOGGLE_MUTE = "com.riderlink.intercom.action.TOGGLE_MUTE"
         const val ACTION_STOP_RIDE = "com.riderlink.intercom.action.STOP_RIDE"
     }

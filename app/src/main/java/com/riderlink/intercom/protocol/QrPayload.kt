@@ -83,7 +83,7 @@ data class QrPayload(
             return sb.toString()
         }
 
-        private fun isValidIpv4(ip: String): Boolean {
+        fun isValidIpv4(ip: String): Boolean {
             val octets = ip.split('.')
             if (octets.size != 4) return false
             for (octet in octets) {

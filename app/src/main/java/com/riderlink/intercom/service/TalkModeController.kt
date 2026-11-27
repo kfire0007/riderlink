@@ -42,10 +42,6 @@ class TalkModeController {
         )
     }
 
-    fun setMuted(muted: Boolean) {
-        _state.value = _state.value.copy(isMuted = muted)
-    }
-
     fun toggleMute(): Boolean {
         val next = !_state.value.isMuted
         _state.value = _state.value.copy(isMuted = next)

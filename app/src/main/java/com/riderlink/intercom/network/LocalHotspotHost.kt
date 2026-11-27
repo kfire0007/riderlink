@@ -9,10 +9,11 @@ import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.net.Inet4Address
-import java.net.NetworkInterface
+import kotlinx.coroutines.withContext
 
 /**
  * Starts and manages an Android LocalOnlyHotspot (zero internet) for the Rider (Host).
@@ -30,6 +31,7 @@ class LocalHotspotHost(
 
     private val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
+    private var resolveJob: Job? = null
 
     @SuppressLint("MissingPermission")
     fun start(
@@ -37,12 +39,13 @@ class LocalHotspotHost(
         onError: (String) -> Unit
     ) {
         stop()
-        val preExistingIps = listAllLocalIpv4s()
+        val preExistingIps = NetworkAddressResolver.listFilteredInterfaceIpv4s().map { it.second }.toSet()
         Log.i(TAG, "Starting LocalOnlyHotspot (pre-existing IPs: $preExistingIps)")
         try {
             wifiManager.startLocalOnlyHotspot(
                 object : WifiManager.LocalOnlyHotspotCallback() {
                     override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
+                        resolveJob?.cancel()
                         reservation = res
                         val (ssid, pass) = extractCredentials(res)
                         if (ssid.isNullOrEmpty() || pass.isNullOrEmpty()) {
@@ -50,23 +53,31 @@ class LocalHotspotHost(
                             onError("Hotspot started without readable SSID/passphrase")
                             return
                         }
-                        scope.launch(Dispatchers.IO) {
+                        resolveJob = scope.launch(Dispatchers.IO) {
                             val hostIp = resolveHotspotIpWithRetries(preExistingIps)
-                            if (hostIp == null) {
-                                stop()
-                                onError("Could not resolve local hotspot IP address")
-                            } else {
-                                Log.i(TAG, "LocalOnlyHotspot ready: ssid=$ssid, hostIp=$hostIp")
-                                onStarted(HotspotCredentials(ssid, pass, hostIp))
+                            if (!isActive || reservation !== res) return@launch
+                            withContext(Dispatchers.Main.immediate) {
+                                if (reservation !== res) return@withContext
+                                if (hostIp == null) {
+                                    stop()
+                                    onError("Could not resolve local hotspot IP address")
+                                } else {
+                                    Log.i(TAG, "LocalOnlyHotspot ready: ssid=$ssid, hostIp=$hostIp")
+                                    onStarted(HotspotCredentials(ssid, pass, hostIp))
+                                }
                             }
                         }
                     }
 
                     override fun onStopped() {
+                        resolveJob?.cancel()
+                        resolveJob = null
                         reservation = null
                     }
 
                     override fun onFailed(reason: Int) {
+                        resolveJob?.cancel()
+                        resolveJob = null
                         reservation = null
                         val detail = when (reason) {
                             ERROR_NO_CHANNEL -> "No Wi-Fi channel available (try turning off Wi-Fi or use Manual LAN)"
@@ -88,6 +99,8 @@ class LocalHotspotHost(
     }
 
     fun stop() {
+        resolveJob?.cancel()
+        resolveJob = null
         try {
             reservation?.close()
         } catch (_: Exception) {
@@ -115,58 +128,14 @@ class LocalHotspotHost(
 
     private suspend fun resolveHotspotIpWithRetries(preExistingIps: Set<String>): String? {
         repeat(15) {
-            val ip = findSoftApIpv4(preExistingIps)
+            val candidates = NetworkAddressResolver.listFilteredInterfaceIpv4s()
+            val ip = NetworkAddressResolver.selectSoftApIpv4(candidates, preExistingIps)
             if (ip != null) return ip
             delay(200L)
         }
         val fallback = LanFallbackConnector.findLocalIpv4()
         Log.w(TAG, "Falling back to LAN IP after SoftAP poll: $fallback")
         return fallback
-    }
-
-    private fun findSoftApIpv4(preExistingIps: Set<String>): String? {
-        val candidates = listAllInterfaceAddresses()
-        val apPrefixes = listOf("ap", "swlan", "softap", "wlan")
-        // 1. Newly created SoftAP gateway (192.168.x.1)
-        val newIps = candidates.filter { it.second !in preExistingIps }
-        newIps.firstOrNull { it.second.startsWith("192.168.") && it.second.endsWith(".1") }?.let { return it.second }
-        newIps.firstOrNull { (iface, _) -> apPrefixes.any { iface.startsWith(it) } }?.let { return it.second }
-        newIps.firstOrNull { it.second.endsWith(".1") }?.let { return it.second }
-        newIps.firstOrNull()?.let {
-            Log.i(TAG, "Using new candidate IP from $candidates")
-            return it.second
-        }
-
-        // 2. Otherwise prefer typical SoftAP interface prefixes (ap*, swlan*, softap*, wlan1/2*)
-        val fallbackApPrefixes = listOf("ap", "swlan", "softap", "wlan1", "wlan2")
-        for (prefix in fallbackApPrefixes) {
-            candidates.firstOrNull { it.first.startsWith(prefix) }?.let { return it.second }
-        }
-        return null
-    }
-
-    private fun listAllLocalIpv4s(): Set<String> =
-        listAllInterfaceAddresses().map { it.second }.toSet()
-
-    private fun listAllInterfaceAddresses(): List<Pair<String, String>> {
-        val interfaces = try {
-            NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-        } catch (_: Exception) {
-            return emptyList()
-        }
-        val ignoredPrefixes = listOf("rmnet", "ccmni", "pdp", "v4-", "clat", "tun", "ppp", "dummy", "epdg", "ims")
-        val result = mutableListOf<Pair<String, String>>()
-        for (iface in interfaces) {
-            if (!iface.isUp || iface.isLoopback) continue
-            val name = iface.name.lowercase()
-            if (ignoredPrefixes.any { name.startsWith(it) }) continue
-            for (addr in iface.inetAddresses.toList().filterIsInstance<Inet4Address>()) {
-                if (!addr.isLoopbackAddress && addr.isSiteLocalAddress) {
-                    addr.hostAddress?.let { result.add(name to it) }
-                }
-            }
-        }
-        return result
     }
 
     companion object {

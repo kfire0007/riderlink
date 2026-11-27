@@ -8,6 +8,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.InetSocketAddress
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -21,7 +22,7 @@ class UdpAudioTransportTest {
         val obrConnectedLatch = CountDownLatch(1)
 
         var receivedAudio: ByteArray? = null
-        var receivedControl: Byte = 0
+        val receivedControls = CopyOnWriteArrayList<Byte>()
 
         val host = UdpAudioTransport(
             senderId = 0,
@@ -33,7 +34,7 @@ class UdpAudioTransportTest {
                 }
 
                 override fun onControlPacket(header: PacketHeader, controlCode: Byte) {
-                    receivedControl = controlCode
+                    receivedControls.add(controlCode)
                     hostControlLatch.countDown()
                 }
 
@@ -63,6 +64,16 @@ class UdpAudioTransportTest {
             }
         )
 
+        val hijackAttempt = UdpAudioTransport(
+            senderId = 1,
+            sessionToken = token,
+            listener = object : UdpAudioTransport.Listener {
+                override fun onAudioPacket(header: PacketHeader, payload: ByteArray, offset: Int, length: Int) {}
+                override fun onControlPacket(header: PacketHeader, controlCode: Byte) {}
+                override fun onLinkStateChanged(state: LinkState) {}
+            }
+        )
+
         try {
             host.start(localPort = 0, initialPeer = null, boundNetwork = null)
             val hostPort = host.boundPort
@@ -82,6 +93,12 @@ class UdpAudioTransportTest {
             rogue.start(localPort = 0, initialPeer = InetSocketAddress("127.0.0.1", hostPort))
             rogue.sendControl(ControlCode.GOODBYE)
 
+            // Pinned OBR must keep its configured peerAddress even if another sender with the same token hits it
+            hijackAttempt.start(localPort = 0, initialPeer = InetSocketAddress("127.0.0.1", obr.boundPort))
+            hijackAttempt.sendControl(ControlCode.PEER_ON_CALL)
+            Thread.sleep(50)
+            assertEquals("127.0.0.1:$hostPort", obr.currentStats().peerAddress)
+
             // OBR sends 640-byte audio frame + PEER_ON_CALL control
             val frame = ByteArray(AudioConfig.BYTES_PER_FRAME) { (it and 0x7F).toByte() }
             assertTrue(obr.sendAudio(frame, 0, frame.size))
@@ -90,8 +107,9 @@ class UdpAudioTransportTest {
             assertTrue("Host should receive audio frame", hostAudioLatch.await(2, TimeUnit.SECONDS))
             assertTrue("Host should receive control packet", hostControlLatch.await(2, TimeUnit.SECONDS))
             assertArrayEquals(frame, receivedAudio)
-            assertEquals(ControlCode.PEER_ON_CALL, receivedControl)
+            assertEquals(listOf(ControlCode.PEER_ON_CALL), receivedControls.toList())
         } finally {
+            hijackAttempt.stop()
             rogue.stop()
             obr.stop()
             host.stop()

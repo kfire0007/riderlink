@@ -41,12 +41,16 @@ class UdpAudioTransport(
     @Volatile
     private var peerAddress: InetSocketAddress? = null
 
+    @Volatile
+    private var pinPeer: Boolean = false
+
     private val rxBuffer = ByteArray(PacketHeader.MAX_DATAGRAM_SIZE + 64)
     private val rxHeader = PacketHeader()
     private val txAudioBuffer = ByteArray(PacketHeader.MAX_DATAGRAM_SIZE)
     private val txControlBuffer = ByteArray(PacketHeader.HEADER_SIZE + 8)
     private val txControlPayload = ByteArray(1)
     private val txPongBuffer = ByteArray(PacketHeader.HEADER_SIZE)
+    private val txPacket = DatagramPacket(txAudioBuffer, 0)
 
     private var rxThread: Thread? = null
     private var heartbeatThread: Thread? = null
@@ -78,6 +82,7 @@ class UdpAudioTransport(
         }
         socket = sock
         peerAddress = initialPeer
+        pinPeer = (initialPeer != null)
         audioTxSeq.set(0L)
         controlTxSeq.set(0L)
 
@@ -180,9 +185,13 @@ class UdpAudioTransport(
 
                 val senderAddr = packet.socketAddress as? InetSocketAddress
                 if (senderAddr != null && peerAddress != senderAddr) {
-                    peerAddress = senderAddr
-                    logInfo("UDP peer learned: ${senderAddr.address.hostAddress}:${senderAddr.port}")
-                    heartbeatMonitor.setPeerAddress("${senderAddr.address.hostAddress}:${senderAddr.port}")
+                    val canLearnPeer = !pinPeer &&
+                        (peerAddress == null || heartbeatMonitor.snapshot().linkState != LinkState.CONNECTED)
+                    if (canLearnPeer) {
+                        peerAddress = senderAddr
+                        logInfo("UDP peer learned: ${senderAddr.address.hostAddress}:${senderAddr.port}")
+                        heartbeatMonitor.setPeerAddress("${senderAddr.address.hostAddress}:${senderAddr.port}")
+                    }
                 }
 
                 val now = nowMs()
@@ -280,7 +289,9 @@ class UdpAudioTransport(
         length: Int
     ): Boolean {
         return try {
-            sock.send(DatagramPacket(data, length, peer))
+            txPacket.setData(data, 0, length)
+            txPacket.socketAddress = peer
+            sock.send(txPacket)
             true
         } catch (_: IOException) {
             false

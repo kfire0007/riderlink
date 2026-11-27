@@ -42,7 +42,7 @@ class HeartbeatMonitor(
     private var highestAudioSeq: Long = -1L
 
     fun start(initialPeerAddress: String? = null) {
-        synchronized(lock) {
+        val changed = synchronized(lock) {
             peerAddress = initialPeerAddress
             lastPingSentMs = 0L
             lastPacketReceivedMs = 0L
@@ -54,12 +54,14 @@ class HeartbeatMonitor(
             highestAudioSeq = -1L
             transitionToLocked(LinkState.WAITING_FOR_PEER)
         }
+        changed?.let { onStateChanged?.invoke(it) }
     }
 
     fun stop() {
-        synchronized(lock) {
+        val changed = synchronized(lock) {
             transitionToLocked(LinkState.DISCONNECTED)
         }
+        changed?.let { onStateChanged?.invoke(it) }
     }
 
     fun setPeerAddress(address: String?) {
@@ -76,21 +78,23 @@ class HeartbeatMonitor(
     }
 
     fun recordPacketReceived(now: Long = nowMs()) {
-        synchronized(lock) {
-            lastPacketReceivedMs = now
-            if (state == LinkState.WAITING_FOR_PEER || state == LinkState.RECONNECTING) {
-                transitionToLocked(LinkState.CONNECTED)
-            }
+        val changed = synchronized(lock) {
+            recordPacketReceivedLocked(now)
         }
+        changed?.let { onStateChanged?.invoke(it) }
     }
 
     fun recordPongReceived(echoedTimestampMs: Long, now: Long = nowMs()) {
-        synchronized(lock) {
+        val changed = synchronized(lock) {
             pongsReceived++
-            val sampleRtt = (now - echoedTimestampMs).coerceAtLeast(0L)
-            rttMs = if (rttMs == 0L) sampleRtt else ((rttMs * 3L + sampleRtt) / 4L)
-            recordPacketReceived(now)
+            val now32 = now and 0xFFFFFFFFL
+            val echo32 = echoedTimestampMs and 0xFFFFFFFFL
+            val diff32 = (now32 - echo32) and 0xFFFFFFFFL
+            val sampleRtt = if (diff32 <= MAX_PLAUSIBLE_RTT_MS) diff32 else 0L
+            rttMs = if (pongsReceived == 1L) sampleRtt else ((rttMs * 3L + sampleRtt) / 4L)
+            recordPacketReceivedLocked(now)
         }
+        changed?.let { onStateChanged?.invoke(it) }
     }
 
     fun recordAudioSequence(sequenceNumber: Long) {
@@ -112,20 +116,26 @@ class HeartbeatMonitor(
      * Returns true if a PING is due.
      */
     fun tick(now: Long = nowMs()): Boolean {
+        val changed: LinkState?
+        val pingDue: Boolean
         synchronized(lock) {
             if (state == LinkState.IDLE || state == LinkState.DISCONNECTED) {
                 return false
             }
 
-            if (state == LinkState.CONNECTED &&
+            changed = if (state == LinkState.CONNECTED &&
                 lastPacketReceivedMs > 0L &&
                 (now - lastPacketReceivedMs) >= dropoutTimeoutMs
             ) {
                 transitionToLocked(LinkState.RECONNECTING)
+            } else {
+                null
             }
 
-            return lastPingSentMs == 0L || (now - lastPingSentMs) >= pingIntervalMs
+            pingDue = lastPingSentMs == 0L || (now - lastPingSentMs) >= pingIntervalMs
         }
+        changed?.let { onStateChanged?.invoke(it) }
+        return pingDue
     }
 
     fun snapshot(): TransportStats = synchronized(lock) {
@@ -149,15 +159,27 @@ class HeartbeatMonitor(
         )
     }
 
-    private fun transitionToLocked(newState: LinkState) {
-        if (state != newState) {
+    private fun recordPacketReceivedLocked(now: Long): LinkState? {
+        lastPacketReceivedMs = now
+        return if (state == LinkState.WAITING_FOR_PEER || state == LinkState.RECONNECTING) {
+            transitionToLocked(LinkState.CONNECTED)
+        } else {
+            null
+        }
+    }
+
+    private fun transitionToLocked(newState: LinkState): LinkState? {
+        return if (state != newState) {
             state = newState
-            onStateChanged?.invoke(newState)
+            newState
+        } else {
+            null
         }
     }
 
     companion object {
         const val DEFAULT_PING_INTERVAL_MS = 1000L
         const val DEFAULT_DROPOUT_TIMEOUT_MS = 3000L
+        private const val MAX_PLAUSIBLE_RTT_MS = 60_000L
     }
 }

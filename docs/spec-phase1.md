@@ -189,6 +189,7 @@ interface AudioCodec {
 | **4. Android hotspot quirks** | Android 10–12 requires Location toggle ON for `LocalOnlyHotspot`; some OEMs restrict or throttle SoftAP | Guided pre-flight check + built-in Manual Hotspot / Same-Wi-Fi LAN fallback sharing the same UDP engine |
 | **5. Wind & engine noise** | Full ML noise cancellation is deferred past Phase 1 | Hardware `AcousticEchoCanceler` + `AutomaticGainControl` + adjustable mic threshold gate + giant Mute button, with a clean `AudioProcessor` hook ready for RNNoise/WebRTC NS later |
 | **6. Phase 2 group upgrade** | Phase 1 is strictly 2-phone (Rider + OBR) | UDP packet header already carries `senderId`, `sessionToken`, `codecId`, and `seq` + swappable `AudioCodec` interface so Phase 2 star-topology group mixing plugs in without a protocol rewrite |
+| **7. Embedded iOS Safari TLS** | Bundled self-signed `.p12` cert enables offline `getUserMedia()` on Safari (`:8443`) | Link confidentiality relies on `LocalOnlyHotspot` WPA2 passphrase; `/ws` enforces rate-limited 4-digit session tokens (5 failures → 10 s lockout) for Manual LAN defense |
 
 ---
 

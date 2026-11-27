@@ -43,6 +43,19 @@ class WebBridgeTest {
         assertNotNull(decoded)
         assertEquals(WebSocketCodec.OPCODE_BINARY, decoded!!.opcode)
         assertArrayEquals(payload, decoded.payload)
+
+        // Masked client-to-server binary frame (640 bytes, 16-bit extended length)
+        val mask = byteArrayOf(0x12, 0x34, 0x56, 0x78)
+        val maskedOut = ByteArrayOutputStream()
+        maskedOut.write(byteArrayOf(0x82.toByte(), (0x80 or 126).toByte(), 0x02, 0x80.toByte()))
+        maskedOut.write(mask)
+        for (i in payload.indices) {
+            maskedOut.write((payload[i].toInt() xor mask[i and 3].toInt()) and 0xFF)
+        }
+        val decodedMasked = WebSocketCodec.readFrame(DataInputStream(ByteArrayInputStream(maskedOut.toByteArray())))
+        assertNotNull(decodedMasked)
+        assertEquals(WebSocketCodec.OPCODE_BINARY, decodedMasked!!.opcode)
+        assertArrayEquals(payload, decodedMasked.payload)
     }
 
     @Test
@@ -59,7 +72,7 @@ class WebBridgeTest {
     }
 
     @Test
-    fun tlsLoopbackServesHtmlRejectsBadTokenAndExchangesAudioOverWss() {
+    fun tlsLoopbackHardeningTokenRotationAndTimeoutWork() {
         val p12File = listOf(
             File("src/main/res/raw/riderlink_local.p12"),
             File("app/src/main/res/raw/riderlink_local.p12")
@@ -67,7 +80,10 @@ class WebBridgeTest {
 
         val connectedLatch = CountDownLatch(1)
         val audioLatch = CountDownLatch(1)
+        val heartbeatLatch = CountDownLatch(1)
+        val disconnectedLatch = CountDownLatch(1)
         var rxAudio: ByteArray? = null
+        var rxRtt: Long? = null
 
         val server = LocalWebBridgeServer(
             openKeystore = { FileInputStream(p12File) },
@@ -83,10 +99,21 @@ class WebBridgeTest {
                     audioLatch.countDown()
                 }
 
-                override fun onHeartbeat(rttMs: Long) {}
+                override fun onHeartbeat(rttMs: Long?) {
+                    if (rttMs != null) {
+                        rxRtt = rttMs
+                        heartbeatLatch.countDown()
+                    }
+                }
+
                 override fun onClientControl(message: String) {}
-                override fun onClientDisconnected() {}
-            }
+
+                override fun onClientDisconnected() {
+                    disconnectedLatch.countDown()
+                }
+            },
+            wsReadTimeoutMs = 250,
+            authLockoutMs = 500L
         )
 
         val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
@@ -112,18 +139,47 @@ class WebBridgeTest {
                 assertTrue(resp.contains("RiderLink"))
             }
 
-            // 2. Verify wrong token gets 403 Forbidden
+            // 2. Non-GET method returns 405 Method Not Allowed
             (clientSsl.socketFactory.createSocket("127.0.0.1", port) as SSLSocket).use { s ->
-                val req = "GET /ws?token=9999 HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+                s.outputStream.write("POST / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".toByteArray())
+                s.outputStream.flush()
+                val firstLine = s.inputStream.bufferedReader().readLine()
+                assertTrue(firstLine.contains("405"))
+            }
+
+            // 3. Oversized >8 KB HTTP header without \r\n\r\n is rejected cleanly
+            (clientSsl.socketFactory.createSocket("127.0.0.1", port) as SSLSocket).use { s ->
+                val junk = "GET / HTTP/1.1\r\nX-Junk: " + "A".repeat(9000)
+                s.outputStream.write(junk.toByteArray())
+                s.outputStream.flush()
+                assertEquals(-1, s.inputStream.read())
+            }
+
+            // 4. 5 consecutive bad tokens trigger 429 Too Many Requests lockout
+            for (attempt in 1..5) {
+                (clientSsl.socketFactory.createSocket("127.0.0.1", port) as SSLSocket).use { s ->
+                    val req = "GET /ws?token=9999 HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+                    s.outputStream.write(req.toByteArray())
+                    s.outputStream.flush()
+                    val firstLine = s.inputStream.bufferedReader().readLine()
+                    val expected = if (attempt < 5) "403" else "429"
+                    assertTrue("Attempt $attempt expected $expected but got $firstLine", firstLine.contains(expected))
+                }
+            }
+
+            // 5. Rotating session token via start() updates accepted token & clears lockout
+            server.start(port = 0, sessionToken = 5123)
+            (clientSsl.socketFactory.createSocket("127.0.0.1", port) as SSLSocket).use { s ->
+                val req = "GET /ws?token=3847 HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
                 s.outputStream.write(req.toByteArray())
                 s.outputStream.flush()
                 val firstLine = s.inputStream.bufferedReader().readLine()
-                assertTrue(firstLine.contains("403"))
+                assertTrue("Old token should be rejected with 403", firstLine.contains("403"))
             }
 
-            // 3. Verify valid token upgrades to WSS and exchanges 640B binary audio
+            // 6. Valid rotated token upgrades to WSS, exchanges audio & ping/pong, and times out when idle
             (clientSsl.socketFactory.createSocket("127.0.0.1", port) as SSLSocket).use { s ->
-                val req = "GET /ws?token=3847 HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+                val req = "GET /ws?token=5123 HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
                 s.outputStream.write(req.toByteArray())
                 s.outputStream.flush()
 
@@ -151,12 +207,34 @@ class WebBridgeTest {
                 assertTrue(audioLatch.await(2, TimeUnit.SECONDS))
                 assertArrayEquals(pcm, rxAudio)
 
-                // Send audio frame from server -> client
+                // Send audio frame from server -> client via non-blocking TX queue
                 assertTrue(server.sendAudio(pcm, 0, pcm.size))
                 val serverFrame = WebSocketCodec.readFrame(DataInputStream(bis))
                 assertNotNull(serverFrame)
                 assertEquals(WebSocketCodec.OPCODE_BINARY, serverFrame!!.opcode)
                 assertArrayEquals(pcm, serverFrame.payload)
+
+                // Verify server ping -> client masked pong RTT callback
+                val pingNow = System.nanoTime() / 1_000_000L
+                assertTrue(server.sendPing(pingNow))
+                val pingFrame = WebSocketCodec.readFrame(DataInputStream(bis))
+                assertNotNull(pingFrame)
+                assertEquals(WebSocketCodec.OPCODE_TEXT, pingFrame!!.opcode)
+                val pongPayload = ("pong:" + String(pingFrame.payload, StandardCharsets.UTF_8).removePrefix("ping:"))
+                    .toByteArray(StandardCharsets.UTF_8)
+                out.write(byteArrayOf(0x81.toByte(), (0x80 or pongPayload.size).toByte()))
+                out.write(mask)
+                for (i in pongPayload.indices) {
+                    out.write((pongPayload[i].toInt() xor mask[i and 3].toInt()) and 0xFF)
+                }
+                out.flush()
+
+                assertTrue("Heartbeat RTT callback should fire", heartbeatLatch.await(2, TimeUnit.SECONDS))
+                assertNotNull(rxRtt)
+                assertTrue(rxRtt!! >= 0L)
+
+                // Stay idle past wsReadTimeoutMs (250 ms) -> server disconnects automatically
+                assertTrue("Idle client should trigger onClientDisconnected", disconnectedLatch.await(2, TimeUnit.SECONDS))
             }
         } finally {
             server.stop()

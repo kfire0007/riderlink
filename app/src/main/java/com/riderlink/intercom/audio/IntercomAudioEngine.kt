@@ -31,15 +31,13 @@ class IntercomAudioEngine(
     @Volatile
     var remoteAudioMuted: Boolean = false
 
-    @Volatile
-    var isLocalVoiceActive: Boolean = false
-        private set
-
     private val txCapturePcm = ShortArray(AudioConfig.SAMPLES_PER_FRAME)
     private val txEncodedBytes = ByteArray(AudioConfig.BYTES_PER_FRAME)
     private val rxDecodePcm = ShortArray(AudioConfig.SAMPLES_PER_FRAME)
     private val rxPlayPcm = ShortArray(AudioConfig.SAMPLES_PER_FRAME)
     private val rxDecodeLock = Any()
+    private val recorderLock = Any()
+    private val playerLock = Any()
 
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
@@ -62,7 +60,6 @@ class IntercomAudioEngine(
         stopAudioThreads()
         chimePlayer.clear()
         jitterBuffer.reset()
-        isLocalVoiceActive = false
     }
 
     fun setPausedForCall(paused: Boolean) {
@@ -70,12 +67,15 @@ class IntercomAudioEngine(
         if (pausedForCall.compareAndSet(!paused, paused)) {
             if (paused) {
                 stopAudioThreads()
-                isLocalVoiceActive = false
             } else {
                 jitterBuffer.reset()
                 startAudioThreads()
             }
         }
+    }
+
+    fun resetJitterBuffer() {
+        jitterBuffer.reset()
     }
 
     fun onIncomingAudio(sequenceNumber: Long, payload: ByteArray, offset: Int, length: Int) {
@@ -114,17 +114,22 @@ class IntercomAudioEngine(
         cap?.interrupt()
         play?.interrupt()
 
-        releaseRecorder()
-        releasePlayer()
+        // Unblock native read()/write() calls first; let each thread's finally release handles,
+        // then run idempotent fallback release only after join() completes.
+        unblockRecorder()
+        unblockPlayer()
 
         try {
-            cap?.join(300L)
+            cap?.join(500L)
         } catch (_: InterruptedException) {
         }
         try {
-            play?.join(300L)
+            play?.join(500L)
         } catch (_: InterruptedException) {
         }
+
+        releaseRecorder()
+        releasePlayer()
     }
 
     @SuppressLint("MissingPermission")
@@ -153,8 +158,14 @@ class IntercomAudioEngine(
             return
         }
 
-        audioRecord = recorder
-        attachEffects(recorder.audioSessionId)
+        synchronized(recorderLock) {
+            if (!running.get() || pausedForCall.get()) {
+                recorder.release()
+                return
+            }
+            audioRecord = recorder
+            attachEffectsLocked(recorder.audioSessionId)
+        }
 
         try {
             recorder.startRecording()
@@ -166,7 +177,6 @@ class IntercomAudioEngine(
                 }
 
                 if (!shouldTransmit()) {
-                    isLocalVoiceActive = false
                     continue
                 }
 
@@ -176,7 +186,6 @@ class IntercomAudioEngine(
                     noiseGate.process(txCapturePcm, AudioConfig.SAMPLES_PER_FRAME)
                 }
 
-                isLocalVoiceActive = pass
                 if (pass) {
                     val encodedLen = codec.encode(txCapturePcm, AudioConfig.SAMPLES_PER_FRAME, txEncodedBytes, 0)
                     onEncodedFrame(txEncodedBytes, 0, encodedLen, codec.codecId)
@@ -184,7 +193,6 @@ class IntercomAudioEngine(
             }
         } catch (_: Exception) {
         } finally {
-            isLocalVoiceActive = false
             releaseRecorder()
         }
     }
@@ -225,7 +233,14 @@ class IntercomAudioEngine(
             return
         }
 
-        audioTrack = track
+        synchronized(playerLock) {
+            if (!running.get() || pausedForCall.get()) {
+                track.release()
+                return
+            }
+            audioTrack = track
+        }
+
         try {
             track.play()
             while (running.get() && !pausedForCall.get() && !Thread.currentThread().isInterrupted) {
@@ -244,7 +259,7 @@ class IntercomAudioEngine(
         }
     }
 
-    private fun attachEffects(audioSessionId: Int) {
+    private fun attachEffectsLocked(audioSessionId: Int) {
         try {
             if (AcousticEchoCanceler.isAvailable()) {
                 aec = AcousticEchoCanceler.create(audioSessionId)?.apply { enabled = true }
@@ -259,20 +274,40 @@ class IntercomAudioEngine(
         }
     }
 
-    private fun releaseRecorder() {
-        try {
-            aec?.release()
-        } catch (_: Exception) {
+    private fun unblockRecorder() {
+        synchronized(recorderLock) {
+            val rec = audioRecord ?: return
+            try {
+                if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    rec.stop()
+                }
+            } catch (_: Exception) {
+            }
         }
-        aec = null
-        try {
-            agc?.release()
-        } catch (_: Exception) {
-        }
-        agc = null
+    }
 
-        val rec = audioRecord ?: return
-        audioRecord = null
+    private fun releaseRecorder() {
+        val rec: AudioRecord?
+        val aecLocal: AcousticEchoCanceler?
+        val agcLocal: AutomaticGainControl?
+        synchronized(recorderLock) {
+            aecLocal = aec
+            aec = null
+            agcLocal = agc
+            agc = null
+            rec = audioRecord
+            audioRecord = null
+        }
+
+        try {
+            aecLocal?.release()
+        } catch (_: Exception) {
+        }
+        try {
+            agcLocal?.release()
+        } catch (_: Exception) {
+        }
+        if (rec == null) return
         try {
             if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 rec.stop()
@@ -285,9 +320,26 @@ class IntercomAudioEngine(
         }
     }
 
+    private fun unblockPlayer() {
+        synchronized(playerLock) {
+            val track = audioTrack ?: return
+            try {
+                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    track.pause()
+                    track.flush()
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     private fun releasePlayer() {
-        val track = audioTrack ?: return
-        audioTrack = null
+        val track: AudioTrack?
+        synchronized(playerLock) {
+            track = audioTrack
+            audioTrack = null
+        }
+        if (track == null) return
         try {
             if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
                 track.pause()

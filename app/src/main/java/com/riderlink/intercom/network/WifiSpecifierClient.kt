@@ -7,7 +7,6 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
-import android.os.Build
 import android.util.Log
 import java.net.Inet4Address
 import java.util.concurrent.atomic.AtomicBoolean
@@ -112,21 +111,7 @@ class WifiSpecifierClient(context: Context) {
 
         if (!delivered.compareAndSet(false, true)) return
 
-        val dhcpServer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            linkProperties.dhcpServerAddress?.hostAddress
-        } else {
-            null
-        }
-        val routeGateway = linkProperties.routes
-            .firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address }
-            ?.gateway
-            ?.hostAddress
-        val subnetGateway = clientIpv4.hostAddress?.let { ip ->
-            val lastDot = ip.lastIndexOf('.')
-            if (lastDot > 0) "${ip.substring(0, lastDot)}.1" else null
-        }
-
-        val gatewayIp = dhcpServer ?: routeGateway ?: subnetGateway
+        val gatewayIp = NetworkAddressResolver.extractGatewayIpv4(linkProperties)
         Log.i(TAG, "WifiSpecifier ready: clientIp=${clientIpv4.hostAddress}, gatewayIp=$gatewayIp")
         onConnected(ConnectedWifi(network = network, gatewayIp = gatewayIp))
     }

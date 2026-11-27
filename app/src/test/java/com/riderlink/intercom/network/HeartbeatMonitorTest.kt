@@ -71,4 +71,21 @@ class HeartbeatMonitorTest {
         assertEquals(5L, stats.audioPacketsReceived)
         assertEquals(16.67f, stats.packetLossPercent, 0.2f)
     }
+
+    @Test
+    fun handles32BitUptimeTimestampWraparoundInRtt() {
+        var fakeTime = 0x1_0000_0050L
+        val monitor = HeartbeatMonitor(nowMs = { fakeTime })
+        monitor.start("192.168.49.1:49152")
+        monitor.recordPingSent(fakeTime)
+
+        // Echoed timestamp is 32-bit masked (0x0000_0038L) while now is > 2^32
+        monitor.recordPongReceived(echoedTimestampMs = 0x0000_0038L, now = fakeTime)
+        assertEquals(24L, monitor.snapshot().rttMs)
+
+        // Wrap across 0xFFFF_FFFF -> 0x1_0000_000A (26 ms elapsed)
+        fakeTime = 0x1_0000_000AL
+        monitor.recordPongReceived(echoedTimestampMs = 0xFFFF_FFF0L, now = fakeTime)
+        assertEquals(24L, monitor.snapshot().rttMs) // (24*3 + 26)/4 = 24
+    }
 }

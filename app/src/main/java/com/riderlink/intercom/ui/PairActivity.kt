@@ -1,13 +1,17 @@
 package com.riderlink.intercom.ui
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.graphics.Bitmap
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.PersistableBundle
 import android.provider.Settings
 import android.view.View
 import android.widget.Toast
@@ -28,7 +32,10 @@ import com.riderlink.intercom.network.TransportMode
 import com.riderlink.intercom.protocol.QrPayload
 import com.riderlink.intercom.protocol.SessionToken
 import com.riderlink.intercom.service.IntercomForegroundService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class PairActivity : AppCompatActivity() {
 
@@ -43,6 +50,10 @@ class PairActivity : AppCompatActivity() {
     private var service: IntercomForegroundService? = null
     private var bound = false
     private var navigatedToRide = false
+    private var sessionStoppedByUser = false
+
+    private val qrBitmapCache = HashMap<String, Bitmap>(4)
+    private var qrRenderJob: Job? = null
 
     private val prefs by lazy {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -73,11 +84,7 @@ class PairActivity : AppCompatActivity() {
             service = s
             bound = true
             observeServiceState(s)
-            if (role == Role.HOST_RIDER) {
-                updatePreFlightAndStartIfReady()
-            } else if (bound) {
-                updatePreFlightAndStartIfReady()
-            }
+            updatePreFlightAndStartIfReady()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -90,7 +97,7 @@ class PairActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityPairBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        PermissionHelper.applySystemBarInsets(binding.root)
+        binding.root.applySystemBarInsets()
 
         val roleName = intent.getStringExtra(EXTRA_ROLE) ?: Role.HOST_RIDER.name
         role = Role.valueOf(roleName)
@@ -101,6 +108,7 @@ class PairActivity : AppCompatActivity() {
         binding.btnTabIphone.visibility = if (role == Role.HOST_RIDER) View.VISIBLE else View.GONE
 
         binding.btnBack.setOnClickListener {
+            sessionStoppedByUser = true
             service?.stopSession()
             finish()
         }
@@ -126,9 +134,7 @@ class PairActivity : AppCompatActivity() {
             }
             hideError()
             renderRolePanels()
-            if (role == Role.HOST_RIDER) {
-                updatePreFlightAndStartIfReady()
-            } else if (bound) {
+            if (bound) {
                 updatePreFlightAndStartIfReady()
             }
         }
@@ -155,17 +161,28 @@ class PairActivity : AppCompatActivity() {
         binding.btnCopyOpenWifi.setOnClickListener {
             val qr = lastScannedQr ?: return@setOnClickListener
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("RiderLink Wi-Fi Password", qr.passphrase))
+            val clip = ClipData.newPlainText("RiderLink Wi-Fi Password", qr.passphrase)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                clip.description.extras = PersistableBundle().apply {
+                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
+            }
+            cm.setPrimaryClip(clip)
             Toast.makeText(this, "Password copied. Connect to ${qr.ssid} then return.", Toast.LENGTH_LONG).show()
             startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
         }
 
         binding.btnConnectAfterWifi.setOnClickListener {
             val qr = lastScannedQr ?: return@setOnClickListener
-            val gatewayIp = LanFallbackConnector.findActiveWifiGatewayIp(this) ?: qr.hostIp
+            val wifi = LanFallbackConnector.findActiveWifiGateway(this)
             hideError()
             ensureServiceStarted()
-            service?.joinViaManualLan(gatewayIp, qr.udpPort, qr.sessionToken)
+            service?.joinViaManualLan(
+                hostIp = wifi?.gatewayIp ?: qr.hostIp,
+                port = qr.udpPort,
+                sessionToken = qr.sessionToken,
+                boundNetwork = wifi?.network
+            )
         }
 
         binding.btnManualConnect.setOnClickListener {
@@ -189,15 +206,21 @@ class PairActivity : AppCompatActivity() {
                 .apply()
             hideError()
             ensureServiceStarted()
-            service?.joinViaManualLan(parsed.hostIp, parsed.udpPort, parsed.sessionToken)
+            val wifiNet = LanFallbackConnector.findActiveWifiGateway(this)?.network
+            service?.joinViaManualLan(parsed.hostIp, parsed.udpPort, parsed.sessionToken, wifiNet)
         }
 
         binding.btnRetry.setOnClickListener {
             hideError()
             if (role == Role.HOST_RIDER) {
                 updatePreFlightAndStartIfReady()
-            } else if (bound) {
-                updatePreFlightAndStartIfReady()
+            } else {
+                val qr = lastScannedQr
+                if (qr != null && selectedMode == TransportMode.LOCAL_ONLY_HOTSPOT) {
+                    ensureServiceStartedAndJoinQr(qr)
+                } else {
+                    updatePreFlightAndStartIfReady()
+                }
             }
         }
 
@@ -217,12 +240,13 @@ class PairActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        qrRenderJob?.cancel()
+        if (!navigatedToRide && isFinishing && !sessionStoppedByUser) {
+            service?.stopSession()
+        }
         if (bound) {
             unbindService(serviceConnection)
             bound = false
-        }
-        if (!navigatedToRide && isFinishing) {
-            service?.stopSession()
         }
         super.onDestroy()
     }
@@ -249,24 +273,41 @@ class PairActivity : AppCompatActivity() {
 
     private fun renderHostQr() {
         val qr = lastHostQrPayload ?: return
+        val qrContent: String
         if (isIphoneHostTab) {
             if (!iphoneStepSafari) {
-                binding.imgQrCode.setImageBitmap(QrBitmapGenerator.generate(qr.toStandardWifiQr()))
+                qrContent = qr.toStandardWifiQr()
                 binding.txtHostStatus.setText(R.string.iphone_hint_wifi)
                 binding.txtHostAddress.text = "Wi-Fi: ${qr.ssid}"
             } else {
                 val url = qr.toIosWebUrl()
-                binding.imgQrCode.setImageBitmap(QrBitmapGenerator.generate(url))
+                qrContent = url
                 binding.txtHostStatus.setText(R.string.iphone_hint_safari)
                 binding.txtHostAddress.text = url
             }
         } else {
-            binding.imgQrCode.setImageBitmap(QrBitmapGenerator.generate(qr.encode()))
+            qrContent = qr.encode()
             binding.txtHostStatus.setText(R.string.host_waiting_scan)
             binding.txtHostAddress.text = "${qr.hostIp}:${qr.udpPort}"
         }
         binding.txtHostSessionCode.text =
             "${getString(R.string.host_code_label)}: ${SessionToken.format(qr.sessionToken)}"
+
+        val cached = qrBitmapCache[qrContent]
+        if (cached != null) {
+            qrRenderJob?.cancel()
+            binding.imgQrCode.setImageBitmap(cached)
+            return
+        }
+
+        qrRenderJob?.cancel()
+        qrRenderJob = lifecycleScope.launch {
+            val bmp = withContext(Dispatchers.Default) {
+                QrBitmapGenerator.generate(qrContent)
+            }
+            qrBitmapCache[qrContent] = bmp
+            binding.imgQrCode.setImageBitmap(bmp)
+        }
     }
 
     private fun updatePreFlightAndStartIfReady() {

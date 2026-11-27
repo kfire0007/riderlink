@@ -66,5 +66,11 @@ class ChimeAndTalkModeTest {
         assertFalse(ctrl.shouldTransmitMic())
         ctrl.setLocalCallPaused(false)
         assertTrue(ctrl.shouldTransmitMic())
+
+        // Switching back to HANDS_FREE clears isPttTransmitting, and PTT press is ignored in HANDS_FREE
+        ctrl.setTalkMode(TalkMode.HANDS_FREE)
+        assertFalse(ctrl.state.value.isPttTransmitting)
+        ctrl.setPttPressed(true)
+        assertFalse(ctrl.state.value.isPttTransmitting)
     }
 }

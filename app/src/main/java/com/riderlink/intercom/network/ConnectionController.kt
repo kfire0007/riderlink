@@ -117,7 +117,12 @@ class ConnectionController(
         )
     }
 
-    fun joinViaManualLan(hostIp: String, port: Int, sessionToken: Int) {
+    fun joinViaManualLan(
+        hostIp: String,
+        port: Int,
+        sessionToken: Int,
+        boundNetwork: android.net.Network? = null
+    ) {
         stop()
         activeMode = TransportMode.MANUAL_LAN
         startClientUdp(
@@ -125,7 +130,7 @@ class ConnectionController(
             port = port,
             sessionToken = sessionToken,
             mode = TransportMode.MANUAL_LAN,
-            boundNetwork = null
+            boundNetwork = boundNetwork
         )
     }
 
