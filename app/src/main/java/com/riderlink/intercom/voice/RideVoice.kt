@@ -5,6 +5,7 @@ import com.riderlink.intercom.audio.ChimeType
 import com.riderlink.intercom.audio.IntercomAudioEngine
 import com.riderlink.intercom.ride.PeerLink
 import com.riderlink.intercom.ride.Ride
+import com.riderlink.intercom.ride.RideOutcome
 import com.riderlink.intercom.ride.RidePhase
 import com.riderlink.intercom.ride.RideState
 import com.riderlink.intercom.service.AudioRouteState
@@ -15,6 +16,8 @@ import com.riderlink.intercom.service.TalkControlState
 import com.riderlink.intercom.service.TalkMode
 import com.riderlink.intercom.service.TalkModeController
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
@@ -31,7 +34,7 @@ import kotlinx.coroutines.launch
 class RideVoice(
     context: Context,
     private val ride: Ride,
-    scope: CoroutineScope
+    private val scope: CoroutineScope
 ) {
     private val talk = TalkModeController()
     val talkControlState: StateFlow<TalkControlState> = talk.state
@@ -62,6 +65,9 @@ class RideVoice(
     private var hasLinkedOnce = false
     private var wasLinked = false
     private var wasPeerOnCall = false
+
+    /** Stops the pipeline once a goodbye chime has had time to play; cancelled if a ride starts. */
+    private var deferredStop: Job? = null
 
     val jitterDepthFrames: Int
         get() = engine.jitterBuffer.currentDepthFrames
@@ -110,12 +116,32 @@ class RideVoice(
 
     private fun onRideState(state: RideState) {
         if (state.isIdle || state.phase == RidePhase.Ending) {
-            stopPipeline()
+            if (state.isIdle && state.lastOutcome == RideOutcome.EndedByHost && pipelineStarted && deferredStop == null) {
+                // The rider may have the phone in a pocket: say the ride is over in-ear, and stop the
+                // pipeline only after the chime has played (stopping clears queued chimes).
+                engine.remoteAudioMuted = true
+                engine.playChime(ChimeType.LINK_LOST)
+                deferredStop = scope.launch {
+                    delay(GOODBYE_CHIME_MS)
+                    deferredStop = null
+                    stopPipeline()
+                }
+            } else if (deferredStop == null) {
+                stopPipeline()
+            }
             hasLinkedOnce = false
             wasLinked = false
             wasPeerOnCall = false
-            if (state.isIdle) talk.reset()
+            // Reset on Ending too: a ride that replaces another (tab switch, join while hosting)
+            // goes Ending -> next ride without passing Idle, and must not inherit mute or call state.
+            if (talk.state.value.isLocalCallPaused) ride.setOnCall(false)
+            talk.reset()
             return
+        }
+        deferredStop?.let {
+            it.cancel()
+            deferredStop = null
+            stopPipeline() // start the next ride from a clean pipeline
         }
 
         val linked = state.anyLinked
@@ -153,7 +179,6 @@ class RideVoice(
     private fun stopPipeline() {
         if (!pipelineStarted) return
         pipelineStarted = false
-        if (talk.state.value.isLocalCallPaused) ride.setOnCall(false)
         buttons.stop()
         callHandler.stop()
         engine.stop()
@@ -172,5 +197,10 @@ class RideVoice(
             talk.setLocalCallPaused(false)
         }
         ride.setOnCall(callActive)
+    }
+
+    private companion object {
+        /** LINK_LOST is 250 ms; the rest covers AudioTrack buffering. */
+        const val GOODBYE_CHIME_MS = 700L
     }
 }

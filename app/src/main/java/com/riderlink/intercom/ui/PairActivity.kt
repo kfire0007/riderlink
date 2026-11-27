@@ -54,6 +54,9 @@ class PairActivity : AppCompatActivity() {
     private var navigatedToRide = false
     private var rideEndedByUser = false
 
+    /** This screen has shown a live ride; a later Idle means that ride ended (e.g. from the notification). */
+    private var sawLiveRide = false
+
     private val qrBitmapCache = HashMap<String, Bitmap>(4)
     private var qrRenderJob: Job? = null
 
@@ -357,11 +360,20 @@ class PairActivity : AppCompatActivity() {
 
     private fun render(state: RideState) {
         val phase = state.phase
+        if (phase != RidePhase.Idle) sawLiveRide = true
         if (phase !is RidePhase.Failed && phase !is RidePhase.NetworkLost && phase != RidePhase.Idle) {
             hideError() // the ride recovered (or restarted), so an earlier failure no longer applies
         }
         when (phase) {
-            RidePhase.Idle -> Unit
+            RidePhase.Idle -> {
+                if (sawLiveRide && !isFinishing) {
+                    // The ride ended while this screen was up: its QR and status no longer lead
+                    // anywhere, so leave rather than show a dead invitation.
+                    lastHostInvitation = null
+                    binding.imgQrCode.setImageDrawable(null)
+                    finish()
+                }
+            }
             RidePhase.FormingNetwork -> binding.txtHostStatus.setText(R.string.host_starting_hotspot)
             is RidePhase.JoiningNetwork -> binding.txtJoinStatus.setText(
                 if (phase.attempt > 1) R.string.join_retrying_wifi else R.string.join_connecting_wifi
