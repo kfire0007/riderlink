@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicLong
  * so cellular data for Google Maps/Waze remains undisturbed.
  */
 class UdpAudioTransport(
-    private val senderId: Byte,
+    senderId: Byte,
     private val sessionToken: Int,
     private val listener: Listener,
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000L }
@@ -27,8 +27,16 @@ class UdpAudioTransport(
     interface Listener {
         fun onAudioPacket(header: PacketHeader, payload: ByteArray, offset: Int, length: Int)
         fun onControlPacket(header: PacketHeader, controlCode: Byte)
+
+        /** Like [onControlPacket], with the bytes that follow the control code (Phase 2 JOIN_* etc.). */
+        fun onControlPacket(header: PacketHeader, controlCode: Byte, payload: ByteArray, offset: Int, length: Int) =
+            onControlPacket(header, controlCode)
         fun onLinkStateChanged(state: LinkState)
     }
+
+    /** Changes once a Phase 2 Host assigns this Peer a sender id in JOIN_ACK. */
+    @Volatile
+    var senderId: Byte = senderId
 
     private val running = AtomicBoolean(false)
     private val audioTxSeq = AtomicLong(0L)
@@ -47,8 +55,7 @@ class UdpAudioTransport(
     private val rxBuffer = ByteArray(PacketHeader.MAX_DATAGRAM_SIZE + 64)
     private val rxHeader = PacketHeader()
     private val txAudioBuffer = ByteArray(PacketHeader.MAX_DATAGRAM_SIZE)
-    private val txControlBuffer = ByteArray(PacketHeader.HEADER_SIZE + 8)
-    private val txControlPayload = ByteArray(1)
+    private val txControlBuffer = ByteArray(PacketHeader.HEADER_SIZE + MAX_CONTROL_PAYLOAD)
     private val txPongBuffer = ByteArray(PacketHeader.HEADER_SIZE)
     private val txPacket = DatagramPacket(txAudioBuffer, 0)
 
@@ -142,7 +149,9 @@ class UdpAudioTransport(
         }
     }
 
-    fun sendControl(controlCode: Byte): Boolean {
+    fun sendControl(controlCode: Byte, extra: ByteArray? = null): Boolean {
+        val extraLen = extra?.size ?: 0
+        require(1 + extraLen <= MAX_CONTROL_PAYLOAD) { "Control payload too large: ${1 + extraLen}" }
         val peer = peerAddress ?: return false
         val sock = socket ?: return false
         if (!running.get()) return false
@@ -150,7 +159,9 @@ class UdpAudioTransport(
         val seq = controlTxSeq.incrementAndGet()
         val ts = nowMs() and 0xFFFFFFFFL
         synchronized(txLock) {
-            txControlPayload[0] = controlCode
+            val payload = ByteArray(1 + extraLen)
+            payload[0] = controlCode
+            if (extra != null) System.arraycopy(extra, 0, payload, 1, extraLen)
             val totalLen = PacketCodec.encode(
                 packetType = PacketType.CONTROL,
                 codecId = CodecId.PCM16_16K,
@@ -158,9 +169,9 @@ class UdpAudioTransport(
                 sessionToken = sessionToken,
                 sequenceNumber = seq,
                 timestampMs = ts,
-                payload = txControlPayload,
+                payload = payload,
                 payloadOffset = 0,
-                payloadLength = 1,
+                payloadLength = payload.size,
                 outBuffer = txControlBuffer
             )
             return sendRaw(sock, peer, txControlBuffer, totalLen)
@@ -211,7 +222,13 @@ class UdpAudioTransport(
                     PacketType.CONTROL -> {
                         heartbeatMonitor.recordPacketReceived(now)
                         if (payloadLen >= 1) {
-                            listener.onControlPacket(rxHeader, rxBuffer[PacketHeader.HEADER_SIZE])
+                            listener.onControlPacket(
+                                rxHeader,
+                                rxBuffer[PacketHeader.HEADER_SIZE],
+                                rxBuffer,
+                                PacketHeader.HEADER_SIZE + 1,
+                                payloadLen - 1
+                            )
                         }
                     }
                 }
@@ -304,6 +321,7 @@ class UdpAudioTransport(
 
     companion object {
         const val DEFAULT_UDP_PORT = 49152
+        const val MAX_CONTROL_PAYLOAD = 64
         private const val HEARTBEAT_TICK_MS = 250L
     }
 }
