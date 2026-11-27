@@ -7,7 +7,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.riderlink.intercom.R
 import com.riderlink.intercom.databinding.ActivityHomeBinding
-import com.riderlink.intercom.network.Role
+import com.riderlink.intercom.ride.RideRole
 import com.riderlink.intercom.oem.BatteryOptimizationHelper
 
 class HomeActivity : AppCompatActivity() {
@@ -21,10 +21,10 @@ class HomeActivity : AppCompatActivity() {
         binding.root.applySystemBarInsets()
 
         binding.btnHostPlate.setOnClickListener {
-            openPairScreen(Role.HOST_RIDER)
+            openPairScreen(RideRole.HOST)
         }
         binding.btnJoinPlate.setOnClickListener {
-            openPairScreen(Role.JOIN_OBR)
+            openPairScreen(RideRole.PEER)
         }
         binding.barBatteryReadiness.setOnClickListener {
             showBatteryChecklistDialog()
@@ -36,7 +36,7 @@ class HomeActivity : AppCompatActivity() {
         refreshBatteryBanner()
     }
 
-    private fun openPairScreen(role: Role) {
+    private fun openPairScreen(role: RideRole) {
         val intent = Intent(this, PairActivity::class.java).apply {
             putExtra(PairActivity.EXTRA_ROLE, role.name)
         }
