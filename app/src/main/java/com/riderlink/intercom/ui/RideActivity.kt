@@ -20,6 +20,7 @@ import com.riderlink.intercom.oem.BatteryOptimizationHelper
 import com.riderlink.intercom.ride.LinkStatus
 import com.riderlink.intercom.ride.RideOutcome
 import com.riderlink.intercom.ride.RidePhase
+import com.riderlink.intercom.ride.RideRole
 import com.riderlink.intercom.ride.RideState
 import com.riderlink.intercom.ride.RideStats
 import com.riderlink.intercom.service.AudioRouteState
@@ -95,9 +96,14 @@ class RideActivity : AppCompatActivity() {
         }
 
         binding.txtRideAlert.setOnClickListener {
-            val phase = app.ride.state.value.phase
-            if (phase is RidePhase.NetworkLost || phase is RidePhase.Failed) {
-                app.ride.retry()
+            val ride = app.ride.state.value
+            if (ride.phase is RidePhase.NetworkLost || ride.phase is RidePhase.Failed) {
+                if (ride.role == RideRole.HOST) {
+                    // A Host retry issues a new invitation, which only the pairing screen can show.
+                    goToHostPairing()
+                } else {
+                    app.ride.retry()
+                }
             }
         }
 
@@ -136,6 +142,11 @@ class RideActivity : AppCompatActivity() {
                             goHome()
                             return@collect
                         }
+                        if (s.ride.role == RideRole.HOST && s.ride.phase == RidePhase.WaitingForPeers) {
+                            // Every Peer left: show the invitation again so they can rejoin.
+                            goToHostPairing()
+                            return@collect
+                        }
                         renderCockpit(s.ride, s.stats, s.route, s.talk)
                         diagnosticsDrawer.render(
                             s.ride,
@@ -158,6 +169,16 @@ class RideActivity : AppCompatActivity() {
         leaving = true
         startActivity(Intent(this, HomeActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        })
+        finish()
+    }
+
+    /** The pairing screen picks up the running ride's network and retries it if it failed. */
+    private fun goToHostPairing() {
+        if (leaving) return
+        leaving = true
+        startActivity(Intent(this, PairActivity::class.java).apply {
+            putExtra(PairActivity.EXTRA_ROLE, RideRole.HOST.name)
         })
         finish()
     }
@@ -212,7 +233,7 @@ class RideActivity : AppCompatActivity() {
         val alertText = when {
             talk.isLocalCallPaused -> getString(R.string.warn_local_on_call)
             talk.isPeerOnCall -> getString(R.string.warn_peer_on_call)
-            phase is RidePhase.NetworkLost -> "${phase.message} (tap here)"
+            phase is RidePhase.NetworkLost -> "${phase.message} Tap here to try again."
             phase is RidePhase.Failed -> "${phase.message} Tap here to try again."
             ride.links.isNotEmpty() && !ride.anyLinked -> getString(R.string.warn_reconnecting)
             route.isSpeakerFallback -> getString(R.string.warn_speaker_fallback)

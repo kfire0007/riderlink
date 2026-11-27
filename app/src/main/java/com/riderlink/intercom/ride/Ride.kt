@@ -275,6 +275,7 @@ class Ride(
 
     private fun onLinked(link: PeerLink) {
         val existing = links[link]
+        log("${link.kind} link ${if (existing == null) "linked" else "recovered"}")
         links[link] = existing?.copy(status = LinkStatus.LINKED) ?: RideLink(link.kind, LinkStatus.LINKED)
         if (existing == null && localOnCall) link.sendControl(PeerControl.ON_CALL)
         publishLinks()
@@ -286,12 +287,14 @@ class Ride(
 
     private fun onReconnecting(link: PeerLink) {
         val existing = links[link] ?: return
+        log("${link.kind} link reconnecting")
         links[link] = existing.copy(status = LinkStatus.RECONNECTING)
         publishLinks()
     }
 
     private fun onGoodbye(link: PeerLink) {
         if (link !in links) return
+        log("${link.kind} link said goodbye")
         if (_state.value.role == RideRole.PEER) {
             finishIdle(RideOutcome.EndedByHost)
             return
@@ -305,6 +308,7 @@ class Ride(
 
     private fun onControl(link: PeerLink, control: PeerControl) {
         val existing = links[link] ?: return
+        log("${link.kind} link control $control")
         links[link] = when (control) {
             PeerControl.ON_CALL -> existing.copy(onCall = true)
             PeerControl.CALL_ENDED -> existing.copy(onCall = false)
@@ -343,7 +347,7 @@ class Ride(
         override fun onFailed(reason: String) = onScheduler(myEpoch) { fail(reason) }
 
         override fun onLost() = onScheduler(myEpoch) {
-            networkLost("Android stopped the Hotspot. Tap Try again.")
+            networkLost("Android stopped the Hotspot.")
         }
     }
 
@@ -359,7 +363,7 @@ class Ride(
         override fun onFailed(reason: String) = onScheduler(myEpoch) { fail(reason) }
 
         override fun onLost() = onScheduler(myEpoch) {
-            networkLost("Lost the Wi-Fi link to the Host. Stay close and tap Try again.")
+            networkLost("Lost the Wi-Fi link to the Host. Stay close to the Host's phone.")
         }
     }
 

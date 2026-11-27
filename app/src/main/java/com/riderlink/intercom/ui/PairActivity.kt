@@ -124,6 +124,14 @@ class PairActivity : AppCompatActivity() {
             updatePreFlightAndStartIfReady()
         }
 
+        // Coming back to a ride that is already hosting: open on its tab, so the Ride sees the same
+        // network kind and keeps (or retries) that ride instead of starting another.
+        val running = ride.state.value
+        if (role == RideRole.HOST && running.role == RideRole.HOST && running.networkKind == NetworkKind.SHARED_WIFI) {
+            selectedNetwork = NetworkKind.SHARED_WIFI
+            binding.toggleTransportMode.check(R.id.btnTabManual)
+        }
+
         binding.toggleIphoneStep.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
             iphoneStepSafari = (checkedId == R.id.btnIphoneStepSafari)
@@ -348,7 +356,11 @@ class PairActivity : AppCompatActivity() {
     }
 
     private fun render(state: RideState) {
-        when (val phase = state.phase) {
+        val phase = state.phase
+        if (phase !is RidePhase.Failed && phase !is RidePhase.NetworkLost && phase != RidePhase.Idle) {
+            hideError() // the ride recovered (or restarted), so an earlier failure no longer applies
+        }
+        when (phase) {
             RidePhase.Idle -> Unit
             RidePhase.FormingNetwork -> binding.txtHostStatus.setText(R.string.host_starting_hotspot)
             is RidePhase.JoiningNetwork -> binding.txtJoinStatus.setText(
