@@ -3,6 +3,8 @@ package com.riderlink.intercom.ride.adapters
 import com.riderlink.intercom.network.LinkState
 import com.riderlink.intercom.network.UdpAudioTransport
 import com.riderlink.intercom.protocol.ControlCode
+import com.riderlink.intercom.protocol.JoinAck
+import com.riderlink.intercom.protocol.JoinRequest
 import com.riderlink.intercom.protocol.PacketHeader
 import com.riderlink.intercom.protocol.SenderId
 import com.riderlink.intercom.ride.BoundNetwork
@@ -11,20 +13,24 @@ import com.riderlink.intercom.ride.LinkEvents
 import com.riderlink.intercom.ride.LinkKind
 import com.riderlink.intercom.ride.LinkStats
 import com.riderlink.intercom.ride.PeerControl
-import com.riderlink.intercom.ride.PeerGateway
 import com.riderlink.intercom.ride.PeerLink
 import java.net.InetSocketAddress
 import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * The link to an Android phone over [UdpAudioTransport]. Voice goes out on the caller's thread
+ * A Peer's link to its Host over [UdpAudioTransport]. Voice goes out on the caller's thread
  * (a single UDP send); controls and goodbye go out on [io] so the main thread never sends.
- *
- * Slot rule (Phase 1, no peer identity yet): while this link is Reconnecting, a sender with the
- * same session token from a new address takes it over and is reported as this link recovering.
+ * The Host side of group rides is [UdpGroupGateway].
  */
 private class UdpPeerLink(private val io: Executor) : PeerLink {
     lateinit var transport: UdpAudioTransport
+
+    /** Set once a Phase 2 Host answers JOIN_REQ; an old Host never does. */
+    val joinAcked = AtomicBoolean(false)
 
     override val kind = LinkKind.ANDROID
 
@@ -60,6 +66,23 @@ private class UdpPeerLink(private val io: Executor) : PeerLink {
             events.onVoice(this@UdpPeerLink, header.sequenceNumber, payload, offset, length)
         }
 
+        override fun onControlPacket(
+            header: PacketHeader,
+            controlCode: Byte,
+            payload: ByteArray,
+            offset: Int,
+            length: Int
+        ) {
+            if (controlCode != ControlCode.JOIN_ACK) return onControlPacket(header, controlCode)
+            val ack = JoinAck.decode(payload, offset, length) ?: return
+            if (!joinAcked.compareAndSet(false, true)) return
+            if (ack.isRefused) {
+                events.onRejected(this@UdpPeerLink, "The group is full. Ask the rider to remove someone, then try again.")
+            } else {
+                transport.senderId = ack.assignedSenderId.toByte()
+            }
+        }
+
         override fun onControlPacket(header: PacketHeader, controlCode: Byte) {
             when (controlCode) {
                 ControlCode.PEER_ON_CALL -> events.onControl(this@UdpPeerLink, PeerControl.ON_CALL)
@@ -78,38 +101,20 @@ private class UdpPeerLink(private val io: Executor) : PeerLink {
     }
 }
 
-/** Host side: listens on [port] for one Android Peer. */
-class UdpPeerGateway(
+/**
+ * Peer side: dials the Host over UDP, bound to the joined Wi-Fi so mobile data stays untouched.
+ * Introduces itself with JOIN_REQ ([identity]) until the Host answers; an old (Phase 1) Host never
+ * answers, and the link works as before.
+ */
+class UdpHostDialer(
     private val io: Executor,
-    private val port: Int = UdpAudioTransport.DEFAULT_UDP_PORT
-) : PeerGateway {
-    override val kind = LinkKind.ANDROID
+    private val identity: () -> JoinRequest
+) : HostDialer {
     private var transport: UdpAudioTransport? = null
-
-    override fun open(sessionToken: Int, events: LinkEvents): Int {
-        close()
-        val link = UdpPeerLink(io)
-        val udp = UdpAudioTransport(SenderId.HOST_RIDER, sessionToken, link.listener(events))
-        link.transport = udp
-        try {
-            udp.start(localPort = port, initialPeer = null, boundNetwork = null)
-        } catch (e: Exception) {
-            udp.stop()
-            throw e
-        }
-        transport = udp
-        return udp.boundPort
+    private val joinTimer = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "RiderLink-Join").apply { isDaemon = true }
     }
-
-    override fun close() {
-        transport?.stop()
-        transport = null
-    }
-}
-
-/** Peer side: dials the Host over UDP, bound to the joined Wi-Fi so mobile data stays untouched. */
-class UdpHostDialer(private val io: Executor) : HostDialer {
-    private var transport: UdpAudioTransport? = null
+    private var joinTask: ScheduledFuture<*>? = null
 
     override fun dial(
         hostIp: String,
@@ -133,11 +138,33 @@ class UdpHostDialer(private val io: Executor) : HostDialer {
             throw e
         }
         transport = udp
+        startJoinHandshake(link, udp)
         return link
     }
 
     override fun hangUp() {
+        joinTask?.cancel(false)
+        joinTask = null
         transport?.stop()
         transport = null
+    }
+
+    private fun startJoinHandshake(link: UdpPeerLink, udp: UdpAudioTransport) {
+        val request = identity().encode()
+        var attempts = 0
+        joinTask?.cancel(false)
+        joinTask = joinTimer.scheduleWithFixedDelay({
+            if (link.joinAcked.get() || attempts >= JOIN_ATTEMPTS) {
+                joinTask?.cancel(false)
+                return@scheduleWithFixedDelay
+            }
+            attempts++
+            io.execute { runCatching { udp.sendControl(ControlCode.JOIN_REQ, request) } }
+        }, 0L, JOIN_RETRY_MS, TimeUnit.MILLISECONDS)
+    }
+
+    private companion object {
+        const val JOIN_RETRY_MS = 700L
+        const val JOIN_ATTEMPTS = 12
     }
 }

@@ -50,6 +50,20 @@ _Avoid_: Ride ID, key
 The 4-digit form of the **Session token** that a **Rider** types for a manual join.
 _Avoid_: PIN, password
 
+## Group rides
+
+**Mix-minus**:
+What one **Rider** hears in a group **Ride**: every other **Rider**, never their own voice. The **Host** builds one for each **Peer**.
+_Avoid_: Mix (alone), conference audio
+
+**Rider name**:
+The name a **Rider** chose for themselves, shown to the rest of the group.
+_Avoid_: Username, nickname, display name
+
+**Legacy Peer**:
+A **Peer** still on the Phase 1 app. It joins a group **Ride** without introducing itself, and is shown simply as "Rider".
+_Avoid_: Old client, v1 peer
+
 ## Link health
 
 **Link**:

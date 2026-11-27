@@ -2,6 +2,21 @@
 
 All notable changes to **RiderLink** are documented here.
 
+## [Unreleased]
+### Added (Phase 2 M1, part 1: group voice)
+- **Group rides:**
+  - A Host now takes up to 9 Android Peers plus the iPhone Safari peer.
+  - Each Peer introduces itself with `JOIN_REQ` (rider name, rider key) and gets its own sender id in `JOIN_ACK`.
+  - A Peer rejoining from a new address keeps its place.
+  - A tenth Peer is told "The group is full".
+  - [ADR 0002](docs/adr/0002-host-mixed-star-with-mix-minus.md) covers the design.
+- **Mix-minus:**
+  - The Host mixes its own mic with every rider and sends each rider everyone except themselves (`GroupAudioMixer`, with one jitter buffer per rider and a soft limiter when several riders talk at once).
+  - Android and Safari riders now hear each other.
+- **Riders on v0.1.x still work:**
+  - On a new Host, they join as Legacy Peers named "Rider".
+  - A new Peer still joins an old Host as before.
+
 ## [0.1.7] - 2026-11-28
 ### Changed
 - **App-scoped Ride module** (`ride/Ride.kt`, [ADR 0001](docs/adr/0001-app-scoped-ride-service-as-foreground-keeper.md)): pairing, the local network, links to other phones, and ending a ride now live in one module built by `RiderLinkApp`. It replaces `ConnectionController`, the service's `start*`/`join*`/`stopSession` pass-throughs, `pendingJoinQr`, `ConnectionState` and `TransportMode`. Activities call the Ride directly and never bind the service.

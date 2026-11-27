@@ -2,11 +2,13 @@ package com.riderlink.intercom.voice
 
 import android.content.Context
 import com.riderlink.intercom.audio.ChimeType
+import com.riderlink.intercom.audio.GroupMixing
 import com.riderlink.intercom.audio.IntercomAudioEngine
 import com.riderlink.intercom.ride.PeerLink
 import com.riderlink.intercom.ride.Ride
 import com.riderlink.intercom.ride.RideOutcome
 import com.riderlink.intercom.ride.RidePhase
+import com.riderlink.intercom.ride.RideRole
 import com.riderlink.intercom.ride.RideState
 import com.riderlink.intercom.service.AudioRouteState
 import com.riderlink.intercom.service.HardwareButtonController
@@ -48,6 +50,15 @@ class RideVoice(
         onEncodedFrame = { bytes, offset, length, _ -> ride.sendVoice(bytes, offset, length) }
     )
 
+    /** While hosting, the engine mixes for every link the Ride currently has. */
+    private val hostMixing = object : GroupMixing {
+        override fun riders(): List<Any> = ride.voiceTargets
+
+        override fun send(rider: Any, bytes: ByteArray, offset: Int, length: Int, codecId: Byte) {
+            ride.sendVoiceTo(rider as PeerLink, bytes, offset, length)
+        }
+    }
+
     private val headset = HeadsetRouteManager(context)
     val audioRouteState: StateFlow<AudioRouteState> = headset.routeState
 
@@ -77,8 +88,8 @@ class RideVoice(
     }
 
     /** Hot path from the Ride: one incoming voice frame. */
-    fun onVoice(@Suppress("UNUSED_PARAMETER") link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
-        engine.onIncomingAudio(sequence, bytes, offset, length)
+    fun onVoice(link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
+        engine.onIncomingAudio(link, sequence, bytes, offset, length)
     }
 
     // --- Talk controls ---------------------------------------------------------------------
@@ -146,7 +157,7 @@ class RideVoice(
 
         val linked = state.anyLinked
         if (linked && !wasLinked) {
-            startPipeline()
+            startPipeline(state.role)
             engine.remoteAudioMuted = false
             engine.playChime(if (hasLinkedOnce) ChimeType.RECONNECTED else ChimeType.CONNECTED)
             hasLinkedOnce = true
@@ -166,9 +177,11 @@ class RideVoice(
         }
     }
 
-    private fun startPipeline() {
+    private fun startPipeline(role: RideRole?) {
         if (pipelineStarted) return
         pipelineStarted = true
+        // The Host mixes per rider (mix-minus); a Peer plays the Host's one stream.
+        engine.groupMixing = if (role == RideRole.HOST) hostMixing else null
         headset.start()
         engine.setNoiseGateThreshold(talk.state.value.micGateThresholdRms)
         engine.start()

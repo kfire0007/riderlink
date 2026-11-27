@@ -12,7 +12,7 @@ import com.riderlink.intercom.ride.adapters.AndroidWifiJoiner
 import com.riderlink.intercom.ride.adapters.MainThreadScheduler
 import com.riderlink.intercom.ride.adapters.SafariPeerGateway
 import com.riderlink.intercom.ride.adapters.UdpHostDialer
-import com.riderlink.intercom.ride.adapters.UdpPeerGateway
+import com.riderlink.intercom.ride.adapters.UdpGroupGateway
 import com.riderlink.intercom.service.IntercomForegroundService
 import com.riderlink.intercom.service.SessionLockManager
 import com.riderlink.intercom.voice.RideVoice
@@ -39,9 +39,12 @@ class RiderLinkApp : Application() {
         private set
     lateinit var locks: SessionLockManager
         private set
+    lateinit var profile: RiderProfile
+        private set
 
     override fun onCreate() {
         super.onCreate()
+        profile = RiderProfile(this)
         val io = Executors.newSingleThreadExecutor { r ->
             Thread(r, "RiderLink-Ride-IO").apply { isDaemon = true }
         }
@@ -50,14 +53,14 @@ class RiderLinkApp : Application() {
             hotspotFormer = AndroidHotspotFormer(this, appScope),
             wifiJoiner = AndroidWifiJoiner(this),
             sharedWifi = AndroidSharedWifi(this),
-            androidGateway = UdpPeerGateway(io),
+            androidGateway = UdpGroupGateway(io, log = { Log.i(TAG, it) }),
             safariGateway = SafariPeerGateway(
                 openKeystore = { resources.openRawResource(R.raw.riderlink_local) },
                 keystorePassword = "riderlink",
                 loadHtmlBytes = { assets.open("web/index.html").use { it.readBytes() } },
                 log = { Log.w(TAG, it) }
             ),
-            hostDialer = UdpHostDialer(io),
+            hostDialer = UdpHostDialer(io, identity = { profile.joinRequest() }),
             voiceReceiver = { link, sequence, bytes, offset, length ->
                 voice.onVoice(link, sequence, bytes, offset, length)
             },

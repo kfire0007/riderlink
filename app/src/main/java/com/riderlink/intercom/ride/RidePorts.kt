@@ -111,6 +111,9 @@ interface LinkEvents {
     fun onControl(link: PeerLink, control: PeerControl)
     /** Hot path: called on the adapter's receive thread. [sequence] is contiguous per link. */
     fun onVoice(link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int)
+
+    /** The Host refused this Peer (e.g. the group is full). Peer side only. */
+    fun onRejected(link: PeerLink, reason: String) {}
 }
 
 /**

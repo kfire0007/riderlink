@@ -15,6 +15,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Full-duplex 16 kHz mono 16-bit PCM engine with hardware AEC/AGC, noise gate,
  * adaptive jitter buffer, in-ear chimes, and polite Google Maps/Waze coexistence.
  */
+/** How a Host's engine reaches its riders when it mixes for a group (docs/adr/0002). */
+interface GroupMixing {
+    /** The riders to mix for right now (hot path, playback thread). */
+    fun riders(): List<Any>
+
+    /** Sends one encoded mix-minus frame to [rider] (hot path, playback thread; never blocks). */
+    fun send(rider: Any, bytes: ByteArray, offset: Int, length: Int, codecId: Byte)
+}
+
 class IntercomAudioEngine(
     private val shouldTransmit: () -> Boolean,
     private val isBypassNoiseGate: () -> Boolean,
@@ -30,6 +39,21 @@ class IntercomAudioEngine(
 
     @Volatile
     var remoteAudioMuted: Boolean = false
+
+    /**
+     * Set while hosting: frames from each rider go to their own buffer in [groupMixer], and every
+     * playback tick sends each rider its mix-minus. Null on a Peer, which plays the Host's single
+     * stream from [jitterBuffer]. Change it only while the engine is stopped.
+     */
+    @Volatile
+    var groupMixing: GroupMixing? = null
+        set(value) {
+            field = value
+            groupMixer.reset()
+        }
+
+    private val groupMixer = GroupAudioMixer<Any>()
+    private val mixTxBytes = ByteArray(AudioConfig.BYTES_PER_FRAME)
 
     private val txCapturePcm = ShortArray(AudioConfig.SAMPLES_PER_FRAME)
     private val txEncodedBytes = ByteArray(AudioConfig.BYTES_PER_FRAME)
@@ -60,6 +84,7 @@ class IntercomAudioEngine(
         stopAudioThreads()
         chimePlayer.clear()
         jitterBuffer.reset()
+        groupMixer.reset()
     }
 
     fun setPausedForCall(paused: Boolean) {
@@ -69,6 +94,7 @@ class IntercomAudioEngine(
                 stopAudioThreads()
             } else {
                 jitterBuffer.reset()
+                groupMixer.reset()
                 startAudioThreads()
             }
         }
@@ -76,14 +102,20 @@ class IntercomAudioEngine(
 
     fun resetJitterBuffer() {
         jitterBuffer.reset()
+        groupMixer.reset()
     }
 
-    fun onIncomingAudio(sequenceNumber: Long, payload: ByteArray, offset: Int, length: Int) {
+    /** One frame from [source] (a rider when hosting, the Host's mix on a Peer). */
+    fun onIncomingAudio(source: Any, sequenceNumber: Long, payload: ByteArray, offset: Int, length: Int) {
         if (!running.get() || pausedForCall.get()) return
         if (length < AudioConfig.BYTES_PER_FRAME) return
         synchronized(rxDecodeLock) {
             val samples = codec.decode(payload, offset, AudioConfig.BYTES_PER_FRAME, rxDecodePcm)
-            jitterBuffer.push(sequenceNumber, rxDecodePcm, samples)
+            if (groupMixing != null) {
+                groupMixer.onIncoming(source, sequenceNumber, rxDecodePcm, samples)
+            } else {
+                jitterBuffer.push(sequenceNumber, rxDecodePcm, samples)
+            }
         }
     }
 
@@ -176,17 +208,14 @@ class IntercomAudioEngine(
                     continue
                 }
 
-                if (!shouldTransmit()) {
-                    continue
-                }
+                val pass = shouldTransmit() && (
+                    isBypassNoiseGate() || noiseGate.process(txCapturePcm, AudioConfig.SAMPLES_PER_FRAME)
+                    )
 
-                val pass = if (isBypassNoiseGate()) {
-                    true
-                } else {
-                    noiseGate.process(txCapturePcm, AudioConfig.SAMPLES_PER_FRAME)
-                }
-
-                if (pass) {
+                if (groupMixing != null) {
+                    // Hosting: the mixer sends the Host's voice inside each rider's mix-minus.
+                    groupMixer.submitHostMic(if (pass) txCapturePcm else null)
+                } else if (pass) {
                     val encodedLen = codec.encode(txCapturePcm, AudioConfig.SAMPLES_PER_FRAME, txEncodedBytes, 0)
                     onEncodedFrame(txEncodedBytes, 0, encodedLen, codec.codecId)
                 }
@@ -244,7 +273,14 @@ class IntercomAudioEngine(
         try {
             track.play()
             while (running.get() && !pausedForCall.get() && !Thread.currentThread().isInterrupted) {
-                if (remoteAudioMuted) {
+                val mixing = groupMixing
+                if (mixing != null) {
+                    groupMixer.tick(mixing.riders(), rxPlayPcm) { rider, pcm ->
+                        val len = codec.encode(pcm, AudioConfig.SAMPLES_PER_FRAME, mixTxBytes, 0)
+                        mixing.send(rider, mixTxBytes, 0, len, codec.codecId)
+                    }
+                    if (remoteAudioMuted) rxPlayPcm.fill(0)
+                } else if (remoteAudioMuted) {
                     rxPlayPcm.fill(0)
                 } else {
                     jitterBuffer.pop(rxPlayPcm)

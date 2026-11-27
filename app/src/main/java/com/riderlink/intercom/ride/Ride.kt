@@ -75,6 +75,15 @@ class Ride(
         for (link in voiceLinks) link.sendVoice(bytes, offset, length)
     }
 
+    /** Hot path, any thread: the links that can send and receive voice right now. */
+    val voiceTargets: List<PeerLink>
+        get() = voiceLinks
+
+    /** Hot path, any thread: sends one frame to one link (the Host's per-rider mix). Never blocks. */
+    fun sendVoiceTo(link: PeerLink, bytes: ByteArray, offset: Int, length: Int) {
+        if (link in voiceLinks) link.sendVoice(bytes, offset, length)
+    }
+
     // --- Command handling ------------------------------------------------------------------
 
     private fun onHost(kind: NetworkKind) {
@@ -377,6 +386,8 @@ class Ride(
         override fun onVoice(link: PeerLink, sequence: Long, bytes: ByteArray, offset: Int, length: Int) {
             if (link in voiceLinks) voiceReceiver.onVoice(link, sequence, bytes, offset, length)
         }
+
+        override fun onRejected(link: PeerLink, reason: String) = onScheduler(myEpoch) { fail(reason) }
     }
 
     companion object {

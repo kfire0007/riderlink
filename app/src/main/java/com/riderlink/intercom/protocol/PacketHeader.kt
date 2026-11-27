@@ -27,6 +27,12 @@ object ControlCode {
     const val PEER_ON_CALL: Byte = 0x03
     const val PEER_CALL_ENDED: Byte = 0x04
     const val GOODBYE: Byte = 0x05
+
+    /** Phase 2 group join: Peer → Host, payload [JoinRequest]. Old Hosts ignore it. */
+    const val JOIN_REQ: Byte = 0x10
+
+    /** Phase 2 group join: Host → Peer, payload [JoinAck]. */
+    const val JOIN_ACK: Byte = 0x11
 }
 
 object CodecId {
