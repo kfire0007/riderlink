@@ -383,13 +383,18 @@ class PairActivity : AppCompatActivity() {
 
     private fun ensureServiceStartedAndJoinQr(qrPayload: QrPayload) {
         ensureServiceStarted()
-        val s = service
-        if (s != null) {
-            pendingJoinQr = null
-            s.joinViaQr(qrPayload)
-        } else {
-            pendingJoinQr = qrPayload
-        }
+        // Wait briefly so PairActivity is fully focused after ZXing closes before launching
+        // Android's system WifiNetworkSpecifier chooser.
+        binding.root.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            val s = service
+            if (s != null) {
+                pendingJoinQr = null
+                s.joinViaQr(qrPayload)
+            } else {
+                pendingJoinQr = qrPayload
+            }
+        }, 350L)
     }
 
     private fun launchQrScanner() {

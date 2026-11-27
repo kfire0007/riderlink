@@ -74,6 +74,7 @@ class WifiSpecifierClient(context: Context) {
             .setNetworkSpecifier(specifier)
             .build()
 
+        val attemptStartedMs = System.nanoTime() / 1_000_000L
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 tryDeliver(network, connectivityManager.getLinkProperties(network), onConnected)
@@ -89,11 +90,12 @@ class WifiSpecifierClient(context: Context) {
                 }
                 runCatching { connectivityManager.unregisterNetworkCallback(this) }
 
-                if (active.get() && !delivered.get() && attempt <= MAX_AUTO_RETRIES) {
+                val elapsedMs = (System.nanoTime() / 1_000_000L) - attemptStartedMs
+                if (active.get() && !delivered.get() && attempt <= MAX_AUTO_RETRIES && elapsedMs < FAST_FAIL_RETRY_WINDOW_MS) {
                     val nextAttempt = attempt + 1
                     Log.w(
                         TAG,
-                        "WifiSpecifier attempt $attempt unavailable for ssid=$ssid; auto-retrying in ${RETRY_DELAY_MS}ms"
+                        "WifiSpecifier attempt $attempt fast-failed in ${elapsedMs}ms for ssid=$ssid; auto-retrying in ${RETRY_DELAY_MS}ms"
                     )
                     onRetrying?.invoke(nextAttempt)
                     val retryRunnable = Runnable {
@@ -103,7 +105,7 @@ class WifiSpecifierClient(context: Context) {
                     pendingRetryRunnable = retryRunnable
                     mainHandler.postDelayed(retryRunnable, RETRY_DELAY_MS)
                 } else if (active.compareAndSet(true, false)) {
-                    Log.w(TAG, "WifiSpecifier unavailable for ssid=$ssid after attempt $attempt")
+                    Log.w(TAG, "WifiSpecifier unavailable for ssid=$ssid after attempt $attempt (${elapsedMs}ms)")
                     onError("Could not connect to Rider hotspot '$ssid'. Stay close and try again.")
                 }
             }
@@ -118,7 +120,8 @@ class WifiSpecifierClient(context: Context) {
 
         activeCallback = callback
         try {
-            connectivityManager.requestNetwork(request, callback, mainHandler, CONNECT_TIMEOUT_MS)
+            // Omit timeoutMs so our app never cancels Android's system Device Chooser mid-prompt.
+            connectivityManager.requestNetwork(request, callback, mainHandler)
         } catch (se: SecurityException) {
             active.set(false)
             onError("Missing Wi-Fi/Network permission: ${se.message}")
@@ -162,8 +165,8 @@ class WifiSpecifierClient(context: Context) {
 
     companion object {
         private const val TAG = "RiderLink"
-        private const val CONNECT_TIMEOUT_MS = 25_000
         private const val MAX_AUTO_RETRIES = 1
+        private const val FAST_FAIL_RETRY_WINDOW_MS = 3_000L
         private const val RETRY_DELAY_MS = 1_800L
     }
 }
