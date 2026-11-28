@@ -2,6 +2,18 @@
 
 All notable changes to **RiderLink** are documented here.
 
+## [Unreleased]
+### Added (Phase 2 Milestone 3: group music)
+- **Group music:**
+  - The Host can add songs from its phone ("Add music" on the ride screen) and play them to the whole group, with previous, play/pause and next. Any format the phone plays works (MP3, M4A/AAC, FLAC, OGG, WAV).
+  - RiderLink plays the songs in its own mini player and streams them through a ½-second buffer, so a song is never loaded into memory whole.
+  - Every rider, Safari and v0.1.x riders included, hears the music inside the voice stream they already get.
+  - [ADR 0003](docs/adr/0003-group-music-through-the-host-mix.md) covers the design.
+- **Music levels:** each rider picks Off, Low, Medium or Full for themselves; Peers tell the Host with a new `MUSIC_PREF` message.
+- **Ducking:** music drops to 20% as soon as anyone talks and comes back about a second after they stop.
+- **Now playing:** every rider sees the song title on the ride screen. It rides along in `ROSTER_SYNC` as an optional trailer that older apps ignore.
+- While music plays the Host sends Opus at 40 kbps instead of 24, for radio-quality music at 16 kHz.
+
 ## [0.2.0] - 2026-11-28
 ### Added (Phase 2 Milestone 1: group intercom)
 - **Group rides:**

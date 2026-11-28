@@ -97,6 +97,7 @@ class FakeLink(
 ) : PeerLink {
     val rostersSent = mutableListOf<com.riderlink.intercom.protocol.RosterSync>()
     var removedCount = 0
+    val musicPrefsSent = mutableListOf<com.riderlink.intercom.music.MusicLevel>()
     val voiceSent = mutableListOf<ByteArray>()
     val controlsSent = mutableListOf<PeerControl>()
     var goodbyes = 0
@@ -122,6 +123,10 @@ class FakeLink(
 
     override fun remove() {
         removedCount++
+    }
+
+    override fun sendMusicPref(level: com.riderlink.intercom.music.MusicLevel) {
+        musicPrefsSent += level
     }
 }
 
@@ -158,6 +163,7 @@ class FakeGateway(
     /** A group Host: another rider joins this gateway as its own link. */
     fun riderJoins(id: Int, name: String): FakeLink = FakeLink(kind, id, name).also { events!!.onLinked(it) }
     fun riderLeaves(rider: FakeLink) = events!!.onGoodbye(rider)
+    fun musicPref(rider: FakeLink, level: com.riderlink.intercom.music.MusicLevel) = events!!.onMusicPref(rider, level)
 }
 
 class FakeDialer : HostDialer {

@@ -1,5 +1,6 @@
 package com.riderlink.intercom.ride
 
+import com.riderlink.intercom.music.MusicLevel
 import com.riderlink.intercom.protocol.CodecId
 import com.riderlink.intercom.protocol.RosterSync
 
@@ -114,6 +115,9 @@ interface PeerLink {
 
     /** Host side: tell this rider it was removed, and keep it out until the ride ends. */
     fun remove() {}
+
+    /** Peer side: tell the Host how loud this rider wants the group music. */
+    fun sendMusicPref(level: MusicLevel) {}
     fun sendVoice(bytes: ByteArray, offset: Int, length: Int)
     fun sendControl(control: PeerControl)
     fun sayGoodbye()
@@ -138,6 +142,9 @@ interface LinkEvents {
 
     /** Peer side: the Host removed this phone from the ride. */
     fun onRemoved(link: PeerLink) {}
+
+    /** Host side: this rider changed how loud it wants the group music. */
+    fun onMusicPref(link: PeerLink, level: MusicLevel) {}
 }
 
 /**

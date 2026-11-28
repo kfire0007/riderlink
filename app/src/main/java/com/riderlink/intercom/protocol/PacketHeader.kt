@@ -39,6 +39,9 @@ object ControlCode {
 
     /** Host → one Peer, no payload: you were removed from this ride. */
     const val HOST_KICK_PEER: Byte = 0x14
+
+    /** Peer → Host, payload `[muted:1][volume0to100:1]`: how loud this rider wants the group music. */
+    const val MUSIC_PREF: Byte = 0x15
 }
 
 object CodecId {

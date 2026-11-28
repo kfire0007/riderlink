@@ -9,6 +9,8 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.os.Process
+import com.riderlink.intercom.music.MusicFrameSource
+import com.riderlink.intercom.music.MusicLevel
 import com.riderlink.intercom.protocol.CodecId
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -26,6 +28,9 @@ interface GroupMixing {
 
     /** The Host muted [rider]: nobody hears it (hot path, playback thread). */
     fun isMuted(rider: Any): Boolean = false
+
+    /** How loud [rider] wants the group music (hot path, playback thread). */
+    fun musicLevel(rider: Any): MusicLevel = MusicLevel.DEFAULT
 
     /** Sends one encoded mix-minus frame to [rider] (hot path, playback thread; never blocks). */
     fun send(rider: Any, bytes: ByteArray, offset: Int, length: Int, codecId: Byte)
@@ -68,11 +73,24 @@ class IntercomAudioEngine(
     private val micOpus = OpusCodec() // capture thread: a Peer's mic
     private val opusDecoders = HashMap<Any, OpusCodec>() // rxDecodeLock: one per source
     private val riderEncoders = HashMap<Any, OpusCodec>() // playback thread: a talker's own mix
-    private val listenerOpus = OpusCodec() // playback thread: the shared listener mix
-    private val sharedOpusBytes = ByteArray(OpusCodec.MAX_PACKET_BYTES)
-    private val sharedPcmBytes = ByteArray(AudioConfig.BYTES_PER_FRAME)
-    private var sharedOpusLen = NOT_ENCODED
-    private var sharedPcmLen = NOT_ENCODED
+    // Playback thread: one shared listener mix per share key (a music level, or 0 without music),
+    // each its own Opus stream, encoded at most once per tick.
+    private val listenerOpus = Array(SHARE_KEYS) { OpusCodec() }
+    private val sharedOpusBytes = Array(SHARE_KEYS) { ByteArray(OpusCodec.MAX_PACKET_BYTES) }
+    private val sharedPcmBytes = Array(SHARE_KEYS) { ByteArray(AudioConfig.BYTES_PER_FRAME) }
+    private val sharedOpusLen = IntArray(SHARE_KEYS)
+    private val sharedPcmLen = IntArray(SHARE_KEYS)
+
+    /** Group music while hosting: pulled one 20 ms frame per tick; null when nothing plays. */
+    @Volatile
+    var musicSource: MusicFrameSource? = null
+
+    /** How loud the Host itself hears the group music. */
+    @Volatile
+    var hostMusicLevel: MusicLevel = MusicLevel.DEFAULT
+
+    private val musicFrame = ShortArray(AudioConfig.SAMPLES_PER_FRAME)
+    private var musicBitrateOn = false
 
     /** Rolling mix-tick cost while hosting, for diagnostics and field checks. */
     @Volatile
@@ -310,10 +328,14 @@ class IntercomAudioEngine(
                 val mixing = groupMixing
                 if (mixing != null) {
                     val tickStart = System.nanoTime()
-                    sharedOpusLen = NOT_ENCODED
-                    sharedPcmLen = NOT_ENCODED
-                    groupMixer.tick(mixing.riders(), rxPlayPcm, mixing::isMuted) { rider, pcm, shared ->
-                        sendMix(mixing, rider, pcm, shared)
+                    sharedOpusLen.fill(NOT_ENCODED)
+                    sharedPcmLen.fill(NOT_ENCODED)
+                    val music = musicSource?.takeIf { it.readFrame(musicFrame) }?.let {
+                        GroupAudioMixer.MusicInput<Any>(musicFrame, hostMusicLevel, mixing::musicLevel)
+                    }
+                    useMusicBitrate(music != null)
+                    groupMixer.tick(mixing.riders(), rxPlayPcm, mixing::isMuted, music) { rider, pcm, shareKey ->
+                        sendMix(mixing, rider, pcm, shareKey)
                     }
                     lastMixTickMicros = (System.nanoTime() - tickStart) / 1_000L
                     if (remoteAudioMuted) rxPlayPcm.fill(0)
@@ -332,24 +354,41 @@ class IntercomAudioEngine(
         }
     }
 
-    /** Encodes one rider's mix in its codec (the shared listener mix once per tick) and sends it. */
-    private fun sendMix(mixing: GroupMixing, rider: Any, pcm: ShortArray, shared: Boolean) {
+    /** Encodes one rider's mix in its codec (each shared mix once per tick) and sends it. */
+    private fun sendMix(mixing: GroupMixing, rider: Any, pcm: ShortArray, shareKey: Int) {
         val n = AudioConfig.SAMPLES_PER_FRAME
+        val shared = shareKey != GroupAudioMixer.OWN_MIX
         if (mixing.codecFor(rider) == CodecId.OPUS) {
             if (shared) {
-                if (sharedOpusLen == NOT_ENCODED) sharedOpusLen = listenerOpus.encode(pcm, n, sharedOpusBytes, 0)
-                if (sharedOpusLen > 0) mixing.send(rider, sharedOpusBytes, 0, sharedOpusLen, CodecId.OPUS)
+                if (sharedOpusLen[shareKey] == NOT_ENCODED) {
+                    sharedOpusLen[shareKey] = listenerOpus[shareKey].encode(pcm, n, sharedOpusBytes[shareKey], 0)
+                }
+                val len = sharedOpusLen[shareKey]
+                if (len > 0) mixing.send(rider, sharedOpusBytes[shareKey], 0, len, CodecId.OPUS)
             } else {
-                val len = riderEncoders.getOrPut(rider) { OpusCodec() }.encode(pcm, n, mixTxBytes, 0)
+                val len = riderEncoders.getOrPut(rider) { newMixEncoder() }.encode(pcm, n, mixTxBytes, 0)
                 if (len > 0) mixing.send(rider, mixTxBytes, 0, len, CodecId.OPUS)
             }
         } else if (shared) {
-            if (sharedPcmLen == NOT_ENCODED) sharedPcmLen = codec.encode(pcm, n, sharedPcmBytes, 0)
-            mixing.send(rider, sharedPcmBytes, 0, sharedPcmLen, CodecId.PCM16_16K)
+            if (sharedPcmLen[shareKey] == NOT_ENCODED) sharedPcmLen[shareKey] = codec.encode(pcm, n, sharedPcmBytes[shareKey], 0)
+            mixing.send(rider, sharedPcmBytes[shareKey], 0, sharedPcmLen[shareKey], CodecId.PCM16_16K)
         } else {
             val len = codec.encode(pcm, n, mixTxBytes, 0)
             mixing.send(rider, mixTxBytes, 0, len, CodecId.PCM16_16K)
         }
+    }
+
+    private fun newMixEncoder() = OpusCodec().also {
+        if (musicBitrateOn) it.setBitrate(OpusCodec.MUSIC_BITRATE_BPS)
+    }
+
+    /** Music needs more bits than voice; switch every Host mix encoder when music starts or stops. */
+    private fun useMusicBitrate(on: Boolean) {
+        if (on == musicBitrateOn) return
+        musicBitrateOn = on
+        val bps = if (on) OpusCodec.MUSIC_BITRATE_BPS else OpusCodec.DEFAULT_BITRATE_BPS
+        listenerOpus.forEach { it.setBitrate(bps) }
+        riderEncoders.values.forEach { it.setBitrate(bps) }
     }
 
     private fun attachEffectsLocked(audioSessionId: Int) {
@@ -448,5 +487,8 @@ class IntercomAudioEngine(
 
     private companion object {
         const val NOT_ENCODED = -1
+
+        /** One shared mix per music level (0..3); without music everyone shares key 0. */
+        val SHARE_KEYS = MusicLevel.entries.size
     }
 }

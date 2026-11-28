@@ -33,7 +33,17 @@ class RosterMessagesTest {
     @Test
     fun truncatedRosterIsRejected() {
         val bytes = RosterSync(1, listOf(RosterEntry(1, "Ana", 1))).encode()
-        assertNull(RosterSync.decode(bytes, 0, bytes.size - 1))
+        assertNull(RosterSync.decode(bytes, 0, bytes.size - 2)) // cut into the entry, not just the optional title
+    }
+
+    @Test
+    fun nowPlayingRidesAlongAtTheEnd_andAnOldRosterStillDecodes() {
+        val withMusic = RosterSync(2, listOf(RosterEntry(0, "Kenneth", RosterEntry.HOST)), nowPlaying = "Highway Song")
+        val bytes = withMusic.encode()
+        assertEquals(withMusic, RosterSync.decode(bytes, 0, bytes.size))
+
+        val old = bytes.copyOf(bytes.size - 1 - "Highway Song".length) // a v0.2 Host sends no title
+        assertEquals(null, RosterSync.decode(old, 0, old.size)!!.nowPlaying)
     }
 
     @Test

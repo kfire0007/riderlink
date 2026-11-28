@@ -4,6 +4,8 @@ import android.content.Context
 import com.riderlink.intercom.audio.ChimeType
 import com.riderlink.intercom.audio.GroupMixing
 import com.riderlink.intercom.audio.IntercomAudioEngine
+import com.riderlink.intercom.music.HostMusicPlayer
+import com.riderlink.intercom.music.MusicLevel
 import com.riderlink.intercom.protocol.CodecId
 import com.riderlink.intercom.ride.PeerLink
 import com.riderlink.intercom.ride.Ride
@@ -37,6 +39,8 @@ import kotlinx.coroutines.launch
 class RideVoice(
     context: Context,
     private val ride: Ride,
+    /** The Host's group music (docs/adr/0003); only fed to the mixer while hosting. */
+    private val music: HostMusicPlayer,
     private val scope: CoroutineScope
 ) {
     private val talk = TalkModeController()
@@ -60,6 +64,8 @@ class RideVoice(
         override fun codecFor(rider: Any): Byte = (rider as PeerLink).codecId
 
         override fun isMuted(rider: Any): Boolean = ride.isHostMuted(rider as PeerLink)
+
+        override fun musicLevel(rider: Any): MusicLevel = ride.musicLevelOf(rider as PeerLink)
 
         override fun send(rider: Any, bytes: ByteArray, offset: Int, length: Int, codecId: Byte) {
             ride.sendVoiceTo(rider as PeerLink, bytes, offset, length)
@@ -99,6 +105,8 @@ class RideVoice(
 
     init {
         scope.launch { ride.state.collect { onRideState(it) } }
+        scope.launch { ride.musicLevel.collect { engine.hostMusicLevel = it } }
+        scope.launch { music.state.collect { ride.setNowPlaying(it.nowPlaying) } }
     }
 
     /** Hot path from the Ride: one incoming voice frame. */
@@ -141,6 +149,7 @@ class RideVoice(
 
     private fun onRideState(state: RideState) {
         if (state.isIdle || state.phase == RidePhase.Ending) {
+            music.pause() // the group is gone; keep the queue for the next ride
             if (state.isIdle && state.lastOutcome == RideOutcome.EndedByHost && pipelineStarted && deferredStop == null) {
                 // The rider may have the phone in a pocket: say the ride is over in-ear, and stop the
                 // pipeline only after the chime has played (stopping clears queued chimes).
@@ -196,6 +205,7 @@ class RideVoice(
         pipelineStarted = true
         // The Host mixes per rider (mix-minus); a Peer plays the Host's one stream.
         engine.groupMixing = if (role == RideRole.HOST) hostMixing else null
+        engine.musicSource = if (role == RideRole.HOST) music else null
         if (role == RideRole.HOST) startSpeakingReporter()
         headset.start()
         engine.setNoiseGateThreshold(talk.state.value.micGateThresholdRms)

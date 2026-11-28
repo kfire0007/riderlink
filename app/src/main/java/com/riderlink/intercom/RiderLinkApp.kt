@@ -7,6 +7,7 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.riderlink.intercom.audio.OpusSelfCheck
+import com.riderlink.intercom.music.HostMusicPlayer
 import com.riderlink.intercom.ride.Ride
 import com.riderlink.intercom.ride.adapters.AndroidHotspotFormer
 import com.riderlink.intercom.ride.adapters.AndroidSharedWifi
@@ -43,6 +44,8 @@ class RiderLinkApp : Application() {
         private set
     lateinit var profile: RiderProfile
         private set
+    lateinit var music: HostMusicPlayer
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -69,7 +72,8 @@ class RiderLinkApp : Application() {
             hostRiderName = { profile.displayName },
             log = { Log.i(TAG, it) }
         )
-        voice = RideVoice(this, ride, appScope)
+        music = HostMusicPlayer(this, log = { Log.w(TAG, it) })
+        voice = RideVoice(this, ride, music, appScope)
         locks = SessionLockManager(this)
         keepForegroundWhileRiding()
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) logOpusCost()

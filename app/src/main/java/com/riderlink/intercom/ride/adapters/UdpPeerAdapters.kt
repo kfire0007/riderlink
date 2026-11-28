@@ -2,6 +2,7 @@ package com.riderlink.intercom.ride.adapters
 
 import com.riderlink.intercom.network.LinkState
 import com.riderlink.intercom.network.UdpAudioTransport
+import com.riderlink.intercom.music.MusicLevel
 import com.riderlink.intercom.protocol.CodecId
 import com.riderlink.intercom.protocol.ControlCode
 import com.riderlink.intercom.protocol.JoinAck
@@ -51,6 +52,11 @@ private class UdpPeerLink(private val io: Executor) : PeerLink {
             PeerControl.MUTED, PeerControl.UNMUTED -> return // not part of the UDP protocol yet
         }
         io.execute { runCatching { transport.sendControl(code) } }
+    }
+
+    override fun sendMusicPref(level: MusicLevel) {
+        val payload = byteArrayOf(if (level == MusicLevel.OFF) 1 else 0, level.wireVolume.toByte())
+        io.execute { runCatching { transport.sendControl(ControlCode.MUSIC_PREF, payload) } }
     }
 
     override fun sayGoodbye() {

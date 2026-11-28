@@ -117,7 +117,9 @@ data class RideState(
     /** Set when [phase] is Idle after a ride. */
     val lastOutcome: RideOutcome? = null,
     /** Everyone in the ride, this phone included. Built by the Host; a Peer shows the Host's copy. */
-    val roster: List<RosterRider> = emptyList()
+    val roster: List<RosterRider> = emptyList(),
+    /** The group music playing right now, if any (the Host's, shown to everyone). */
+    val nowPlaying: String? = null
 ) {
     val isIdle: Boolean get() = phase == RidePhase.Idle
     val anyLinked: Boolean get() = links.any { it.status == LinkStatus.LINKED }

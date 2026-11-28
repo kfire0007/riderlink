@@ -69,8 +69,8 @@ Brief dropouts auto-recover silently once back in range without re-scanning QR c
 
 See [docs/spec-phase2.md](docs/spec-phase2.md) and [docs/intent/phase2-group-intercom.md](docs/intent/phase2-group-intercom.md):
 - **`v0.2.0` — 6–10 Rider Group Intercom + Opus + Live Roster:** ✅ Released. Host-mixed star (mix-minus), Opus, rider names, live roster, Host mute/remove, iPhone Safari slot. (Opus FEC recovery on decode is still to come.)
-- **`v0.3.0` — Hands-Free Self-Healing Network:** Exact-BSSID + `CompanionDeviceManager` zero-tap silent auto-rejoin when separated scooters catch back up, plus Bluetooth-earbud-safe Backup Host failover.
-- **`v0.4.0` — Group Music Sharing:** Host offline MP3 playback (plus optional experimental Spotify/YouTube Music `AudioPlaybackCapture`), automatic voice ducking (~20%), and per-rider local Music Mute & Volume slider.
+- **`v0.3.0` — Group Music:** The Host plays songs from its phone in RiderLink's own mini player, mixed into every rider's audio with automatic voice ducking (~20%) and a per-rider Off/Low/Medium/Full level. Capturing other apps (Spotify, YouTube Music) is left out on purpose ([ADR 0003](docs/adr/0003-group-music-through-the-host-mix.md)).
+- **`v0.4.0` — Hands-Free Self-Healing Network:** Exact-BSSID + `CompanionDeviceManager` zero-tap silent auto-rejoin when separated scooters catch back up, plus Bluetooth-earbud-safe Backup Host failover.
 
 ---
 

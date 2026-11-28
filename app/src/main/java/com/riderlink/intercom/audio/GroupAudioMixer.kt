@@ -1,5 +1,7 @@
 package com.riderlink.intercom.audio
 
+import com.riderlink.intercom.music.MusicDucker
+import com.riderlink.intercom.music.MusicLevel
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.exp
@@ -13,6 +15,10 @@ import kotlin.math.exp
  * Riders who aren't talking all get the same mix; [tick] flags it as shared so a caller can
  * encode it once for all of them. A rider the Host muted is heard by nobody, but still hears the
  * group. [recentTalkers] says who spoke lately, for the roster's speaking badges.
+ *
+ * Group music (docs/adr/0003): when a [MusicInput] is given, its frame is ducked while anyone
+ * talks and added to each rider's mix at that rider's [MusicLevel]. Riders who aren't talking share
+ * one mix per level, so a caller encodes at most one mix per level plus one per talker.
  *
  * Threads: [onIncoming] from link receive threads, [submitHostMic] from the capture thread, and
  * [tick] / [reset] from the playback thread. [tick] allocates only when a new rider appears.
@@ -34,6 +40,8 @@ class GroupAudioMixer<K : Any>(
     private val out = ShortArray(frameSamples)
     private val frames = HashMap<K, ShortArray>()
     private val talking = HashMap<K, Boolean>()
+    private val musicScaled = IntArray(frameSamples)
+    private val ducker = MusicDucker()
 
     // Who spoke when, in ticks; read from other threads by [recentTalkers].
     @Volatile
@@ -75,7 +83,8 @@ class GroupAudioMixer<K : Any>(
         riders: List<K>,
         hostOut: ShortArray,
         isMuted: (K) -> Boolean = { false },
-        send: (rider: K, pcm: ShortArray, shared: Boolean) -> Unit
+        music: MusicInput<K>? = null,
+        send: (rider: K, pcm: ShortArray, shareKey: Int) -> Unit
     ): Boolean {
         dropRidersNotIn(riders)
         val tickNow = ++tickCount
@@ -112,19 +121,31 @@ class GroupAudioMixer<K : Any>(
             }
         }
 
-        for (i in 0 until frameSamples) hostOut[i] = limit(everyRider[i])
+        val voices = ridersTalking + if (micTalking) 1 else 0
+        if (music != null) {
+            val duck = ducker.next(voiceActive = voices > 0) * MUSIC_BASE_GAIN
+            for (i in 0 until frameSamples) musicScaled[i] = (music.frame[i] * duck).toInt()
+        } else {
+            ducker.reset()
+        }
 
-        val sources = ridersTalking + if (micTalking) 1 else 0
+        val hostMusicGain = if (music != null) music.hostLevel.gain else 0f
+        for (i in 0 until frameSamples) hostOut[i] = limit(everyRider[i] + (musicScaled[i] * hostMusicGain).toInt())
+
         for (rider in riders) {
             val own = talking[rider] == true
-            if (sources - (if (own) 1 else 0) == 0) continue
+            val level = music?.levelOf?.invoke(rider) ?: MusicLevel.OFF
+            val hearsMusic = music != null && level != MusicLevel.OFF
+            if (voices - (if (own) 1 else 0) == 0 && !hearsMusic) continue
             val frame = frames.getValue(rider)
+            val musicGain = if (hearsMusic) level.gain else 0f
             for (i in 0 until frameSamples) {
-                out[i] = limit(if (own) total[i] - frame[i] else total[i])
+                val voice = if (own) total[i] - frame[i] else total[i]
+                out[i] = limit(voice + (musicScaled[i] * musicGain).toInt())
             }
-            send(rider, out, !own)
+            send(rider, out, if (own) OWN_MIX else if (music != null) level.ordinal else 0)
         }
-        return ridersTalking > 0
+        return ridersTalking > 0 || (music != null && music.hostLevel != MusicLevel.OFF)
     }
 
     /** Any thread: whether the Host and which riders spoke in the last [withinTicks] ticks. */
@@ -142,7 +163,20 @@ class GroupAudioMixer<K : Any>(
         talking.keys.retainAll(riders.toSet())
     }
 
+    /** One tick of group music: a 16 kHz mono frame and who hears it how loud. */
+    class MusicInput<K>(
+        val frame: ShortArray,
+        val hostLevel: MusicLevel,
+        val levelOf: (K) -> MusicLevel
+    )
+
     companion object {
+        /** [tick]'s shareKey for a talker's own mix-minus; any other key is shared by every rider with it. */
+        const val OWN_MIX = -1
+
+        /** Songs are mastered loud; keep music under the voices even at FULL (then ducked further). */
+        const val MUSIC_BASE_GAIN = 0.35f
+
         /** A rider counts as speaking for this long after their last frame (15 x 20 ms = 300 ms). */
         const val SPEAKING_HOLD_TICKS = 15
 

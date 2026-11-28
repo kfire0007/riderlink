@@ -10,6 +10,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -18,6 +19,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.riderlink.intercom.R
 import com.riderlink.intercom.RiderLinkApp
 import com.riderlink.intercom.databinding.ActivityRideBinding
+import com.riderlink.intercom.music.MusicLevel
+import com.riderlink.intercom.music.MusicState
 import com.riderlink.intercom.oem.BatteryOptimizationHelper
 import com.riderlink.intercom.ride.LinkKind
 import com.riderlink.intercom.ride.LinkStatus
@@ -41,6 +44,17 @@ class RideActivity : AppCompatActivity() {
     private val app by lazy { RiderLinkApp.from(this) }
     private var leaving = false
     private var shownRoster: List<RosterRider>? = null
+
+    /** The Host picks songs with the system file picker; read access is kept for the queue. */
+    private val pickMusic = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) return@registerForActivityResult
+        for (uri in uris) {
+            runCatching {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+        app.music.add(uris)
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,12 +126,29 @@ class RideActivity : AppCompatActivity() {
             }
         }
 
+        setUpMusicCard()
+
         binding.btnEndRide.setOnClickListener {
             app.ride.end()
             goHome()
         }
 
         observeRide()
+    }
+
+    private fun setUpMusicCard() {
+        binding.btnMusicAdd.setOnClickListener {
+            runCatching { pickMusic.launch(arrayOf("audio/*")) }
+                .onFailure { Toast.makeText(this, R.string.music_pick_failed, Toast.LENGTH_LONG).show() }
+        }
+        binding.btnMusicPlay.setOnClickListener { app.music.togglePlay() }
+        binding.btnMusicNext.setOnClickListener { app.music.next() }
+        binding.btnMusicPrevious.setOnClickListener { app.music.previous() }
+        binding.toggleMusicLevel.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val level = LEVEL_BUTTONS.entries.firstOrNull { it.value == checkedId }?.key ?: return@addOnButtonCheckedListener
+            if (app.ride.musicLevel.value != level) app.ride.setMusicLevel(level)
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -133,6 +164,9 @@ class RideActivity : AppCompatActivity() {
     private fun observeRide() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    combine(app.ride.state, app.music.state, app.ride.musicLevel) { r, p, l -> renderMusic(r, p, l) }.collect {}
+                }
                 combine(
                     app.ride.state,
                     app.ride.stats,
@@ -334,6 +368,42 @@ class RideActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * The music card. The Host always sees it (with the player); a Peer sees it once the Host plays
+     * something, and only picks how loud it hears the music.
+     */
+    private fun renderMusic(ride: RideState, player: MusicState, level: MusicLevel) {
+        val hosting = ride.role == RideRole.HOST
+        val show = !ride.isIdle && (hosting || ride.nowPlaying != null)
+        binding.panelMusic.visibility = if (show) View.VISIBLE else View.GONE
+        if (!show) return
+
+        binding.rowMusicTransport.visibility = if (hosting) View.VISIBLE else View.GONE
+        val track = player.current
+        binding.txtNowPlaying.text = when {
+            !hosting -> ride.nowPlaying
+            track == null -> getString(R.string.music_empty_host)
+            else -> {
+                val title = if (player.queue.size > 1) {
+                    getString(R.string.music_track_of, track.title, player.index + 1, player.queue.size)
+                } else {
+                    track.title
+                }
+                if (player.playing) title else getString(R.string.music_paused, title)
+            }
+        }
+        if (hosting) {
+            val hasQueue = player.queue.isNotEmpty()
+            binding.btnMusicPlay.isEnabled = hasQueue
+            binding.btnMusicNext.isEnabled = hasQueue
+            binding.btnMusicPrevious.isEnabled = hasQueue
+            binding.btnMusicPlay.setIconResource(if (player.playing) R.drawable.ic_music_pause else R.drawable.ic_music_play)
+            binding.btnMusicPlay.contentDescription = getString(if (player.playing) R.string.music_pause else R.string.music_play)
+        }
+        val wanted = LEVEL_BUTTONS.getValue(level)
+        if (binding.toggleMusicLevel.checkedButtonId != wanted) binding.toggleMusicLevel.check(wanted)
+    }
+
     private fun offerHostActions(rider: RosterRider) {
         val muteLabel = getString(
             if (rider.hostMuted) R.string.roster_action_unmute else R.string.roster_action_mute,
@@ -369,5 +439,12 @@ class RideActivity : AppCompatActivity() {
     private companion object {
         /** Above this many Android Peers the Host suggests the Wi-Fi may get crowded (spec: 6 phones is the sweet spot). */
         const val CROWDED_AFTER_PEERS = 5
+
+        val LEVEL_BUTTONS = mapOf(
+            MusicLevel.OFF to R.id.btnMusicOff,
+            MusicLevel.LOW to R.id.btnMusicLow,
+            MusicLevel.MEDIUM to R.id.btnMusicMedium,
+            MusicLevel.FULL to R.id.btnMusicFull
+        )
     }
 }

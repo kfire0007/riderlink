@@ -18,8 +18,8 @@ Phase 2 is delivered in **three vertical, independently testable milestones**:
 | Milestone | Target | Headline Capabilities |
 |---|---|---|
 | **M1 (`v0.2.0`)** | 6–10 Rider Group & Opus | `GroupAudioMixer` (mix-minus), **Opus** codec (`CodecId.OPUS_24K`), Rider Display Name, Live Group Roster, Host mute/kick, iPhone Safari peer slot |
-| **M2 (`v0.3.0`)** | Hands-Free Self-Healing | `RL2` QR with Host BSSID + 128-bit `groupKey`, exact-BSSID + `CompanionDeviceManager` silent auto-rejoin, Backup Host failover |
-| **M3 (`v0.4.0`)** | Group Music Sharing | Host offline MP3 picker & decoder, auto-ducking (~20% during speech), per-rider Music Mute & Volume slider, optional experimental `AudioPlaybackCapture` |
+| **M2 (`v0.4.0`)** | Hands-Free Self-Healing | `RL2` QR with Host BSSID + 128-bit `groupKey`, exact-BSSID + `CompanionDeviceManager` silent auto-rejoin, Backup Host failover |
+| **M3 (`v0.3.0`, shipped before M2)** | Group Music Sharing | Host in-app music player & streaming decoder, auto-ducking (~20% during speech), per-rider Off/Low/Medium/Full music level |
 
 ---
 
@@ -61,7 +61,7 @@ New `ControlCode` values:
 
 ---
 
-## 3. Milestone 2 (`v0.3.0`) — Hands-Free Self-Healing Network
+## 3. Milestone 2 (`v0.4.0`) — Hands-Free Self-Healing Network
 
 ### 3.1 Zero-Tap Exact-BSSID Auto-Rejoin
 - **Problem Solved:** Android `WifiNetworkSpecifier` shows a user confirmation popup whenever connecting to an unfamiliar network, which is unsafe while riding. However, Android skips the prompt on subsequent connections when **SSID + exact BSSID (`MacAddress`)** match (and/or `CompanionDeviceManager` pre-approval is registered on Android 11+).
@@ -83,7 +83,9 @@ New `ControlCode` values:
 
 ---
 
-## 4. Milestone 3 (`v0.4.0`) — Group Music Sharing
+## 4. Milestone 3 (`v0.3.0`) — Group Music Sharing
+
+> **As built** ([ADR 0003](adr/0003-group-music-through-the-host-mix.md)): music ships before M2. Any format MediaCodec plays (not only MP3), a windowed-sinc resampler, four shared Music levels (Off/Low/Medium/Full) instead of a 0–100% slider so listeners on one level share an Opus encode, Opus at 40 kbps while music plays, and the title in `ROSTER_SYNC`. §4.3 was dropped.
 
 ### 4.1 Primary Source: Host Offline MP3 Player
 - Host picks local `.mp3` files / playlist folder via Android Storage Access Framework (`ACTION_OPEN_DOCUMENT`, 100% offline, zero storage permissions needed, zero DRM blocks).
@@ -94,7 +96,7 @@ New `ControlCode` values:
 - **Auto-Ducking:** Whenever any speaker (Host or peer) has active voice energy above the gate threshold, `GroupAudioMixer` attenuates the music bed smoothly to **`~20%` (`-14 dB`)** and ramps back up over **`1000 ms`** after speech stops.
 - **Per-Rider Controls (Zero Extra Wi-Fi Traffic):** Each rider has a **Music Mute** button and **Music Volume** slider (`0–100%`) in `RideActivity`. Changes send a tiny `MUSIC_PREF` control packet to the Host, which scales music in that rider's personalized mix-minus stream.
 
-### 4.3 Optional Experimental "Share App Audio" (Spotify / YouTube Music)
+### 4.3 ~~Optional Experimental "Share App Audio" (Spotify / YouTube Music)~~ (dropped)
 - Uses Android 10+ `AudioPlaybackCaptureConfiguration` (`MediaProjection` consent once per ride start).
 - Marked explicitly as **Experimental** in UI because streaming apps with `ALLOW_CAPTURE_BY_NONE` or DRM output silence; offline MP3 remains the guaranteed primary source.
 

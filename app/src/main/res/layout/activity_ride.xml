@@ -241,6 +241,169 @@
                 android:progress="150" />
         </LinearLayout>
 
+        <!-- GROUP MUSIC (Phase 2 M3, docs/adr/0003): the Host's player; everyone picks a level -->
+        <LinearLayout
+            android:id="@+id/panelMusic"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_status_pill"
+            android:orientation="vertical"
+            android:padding="14dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/music_title"
+                android:textColor="@color/ink_slate"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/txtNowPlaying"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textColor="@color/ink_white"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/rowMusicTransport"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMusicAdd"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="56dp"
+                    android:layout_weight="1.6"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/music_add"
+                    android:textColor="@color/ink_white"
+                    app:icon="@drawable/ic_music_add"
+                    app:iconTint="@color/ink_white" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMusicPrevious"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="56dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:contentDescription="@string/music_previous"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    app:icon="@drawable/ic_music_previous"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp"
+                    app:iconTint="@color/ink_white" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMusicPlay"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="56dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:contentDescription="@string/music_play"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    app:icon="@drawable/ic_music_play"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp"
+                    app:iconTint="@color/ink_white" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMusicNext"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="56dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:contentDescription="@string/music_next"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    app:icon="@drawable/ic_music_next"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp"
+                    app:iconTint="@color/ink_white" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/music_level_label"
+                android:textColor="@color/ink_slate"
+                android:textSize="12sp" />
+
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/toggleMusicLevel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMusicOff"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    android:text="@string/music_level_off"
+                    android:textColor="@color/ink_white" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMusicLow"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    android:text="@string/music_level_low"
+                    android:textColor="@color/ink_white" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMusicMedium"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    android:text="@string/music_level_medium"
+                    android:textColor="@color/ink_white" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMusicFull"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    android:text="@string/music_level_full"
+                    android:textColor="@color/ink_white" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+        </LinearLayout>
+
         <!-- DIAGNOSTICS & END RIDE ACTIONS -->
         <LinearLayout
             android:layout_width="match_parent"
