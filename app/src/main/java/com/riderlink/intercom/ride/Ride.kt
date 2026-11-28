@@ -1,5 +1,6 @@
 package com.riderlink.intercom.ride
 
+import com.riderlink.intercom.music.MusicLevel
 import com.riderlink.intercom.protocol.RosterEntry
 import com.riderlink.intercom.protocol.RosterSync
 import com.riderlink.intercom.protocol.SessionToken
@@ -37,6 +38,11 @@ class Ride(
     private val _stats = MutableStateFlow(RideStats())
     val stats: StateFlow<RideStats> = _stats.asStateFlow()
 
+    private val _musicLevel = MutableStateFlow(MusicLevel.DEFAULT)
+
+    /** How loud this phone's rider wants the group music; kept across rides. */
+    val musicLevel: StateFlow<MusicLevel> = _musicLevel.asStateFlow()
+
     private sealed interface Command {
         /** [sessionToken] null means "issue a new one". */
         data class Host(val kind: NetworkKind, val sessionToken: Int? = null) : Command
@@ -66,7 +72,11 @@ class Ride(
     private var hostSpeaking = false
     private var speakingLinks: Set<PeerLink> = emptySet()
     private var rosterVersion = 0
-    private var lastSentRoster: List<RosterEntry>? = null
+    private var lastSentRoster: RosterSync? = null
+
+    // Group music (docs/adr/0003).
+    private var hostNowPlaying: String? = null
+    private val musicLevels = java.util.concurrent.ConcurrentHashMap<PeerLink, MusicLevel>()
 
     // --- Commands --------------------------------------------------------------------------
 
@@ -106,6 +116,22 @@ class Ride(
 
     /** Host: remove rider [riderId] from the ride; it can't rejoin until this ride ends. */
     fun remove(riderId: Int) = scheduler.post { onRemove(riderId) }
+
+    /** Hot path, any thread: how loud [link]'s rider wants the group music. */
+    fun musicLevelOf(link: PeerLink): MusicLevel = musicLevels[link] ?: MusicLevel.DEFAULT
+
+    /** Host, from the music player: what's playing for the group (null when paused or stopped). */
+    fun setNowPlaying(title: String?) = scheduler.post {
+        if (hostNowPlaying == title) return@post
+        hostNowPlaying = title
+        publishRoster()
+    }
+
+    /** Either role: how loud this rider wants the group music. A Peer tells its Host. */
+    fun setMusicLevel(level: MusicLevel) = scheduler.post {
+        _musicLevel.value = level
+        if (_state.value.role == RideRole.PEER) links.keys.forEach { it.sendMusicPref(level) }
+    }
 
     /** Host, from the voice side: who is talking right now (for the roster's speaking badges). */
     fun reportSpeaking(hostTalking: Boolean, talking: Set<PeerLink>) =
@@ -309,6 +335,7 @@ class Ride(
         voiceLinks = emptyList()
         mutedLinks.clear()
         mutedSnapshot = emptySet()
+        musicLevels.clear()
         hostSpeaking = false
         speakingLinks = emptySet()
         lastSentRoster = null
@@ -322,6 +349,7 @@ class Ride(
         log("${link.kind} link ${if (existing == null) "linked" else "recovered"}")
         links[link] = existing?.copy(status = LinkStatus.LINKED) ?: RideLink(link.kind, LinkStatus.LINKED)
         if (existing == null && localOnCall) link.sendControl(PeerControl.ON_CALL)
+        if (existing == null && _state.value.role == RideRole.PEER) link.sendMusicPref(_musicLevel.value)
         publishLinks()
         val phase = _state.value.phase
         if (phase == RidePhase.WaitingForPeers || phase == RidePhase.Linking) {
@@ -349,6 +377,7 @@ class Ride(
     /** Host: a rider left (goodbye) or was removed. */
     private fun dropLink(link: PeerLink) {
         links.remove(link)
+        musicLevels.remove(link)
         if (mutedLinks.remove(link)) mutedSnapshot = mutedLinks.toSet()
         speakingLinks = speakingLinks - link
         publishLinks()
@@ -431,7 +460,9 @@ class Ride(
                 )
             }
         }
-        if (roster != s.roster) _state.value = s.copy(roster = roster)
+        if (roster != s.roster || s.nowPlaying != hostNowPlaying) {
+            _state.value = s.copy(roster = roster, nowPlaying = hostNowPlaying)
+        }
         sendRoster(force = false)
     }
 
@@ -439,10 +470,13 @@ class Ride(
     private fun sendRoster(force: Boolean) {
         if (_state.value.role != RideRole.HOST || links.isEmpty()) return
         val entries = _state.value.roster.map { it.toEntry() }
-        if (!force && entries == lastSentRoster) return
-        if (entries != lastSentRoster) rosterVersion = (rosterVersion + 1) and 0xFF
-        lastSentRoster = entries
-        val sync = RosterSync(rosterVersion, entries)
+        val content = RosterSync(0, entries, hostNowPlaying)
+        val last = lastSentRoster
+        val changed = last == null || last.entries != entries || last.nowPlaying != hostNowPlaying
+        if (!force && !changed) return
+        if (changed) rosterVersion = (rosterVersion + 1) and 0xFF
+        val sync = content.copy(version = rosterVersion)
+        lastSentRoster = sync
         links.keys.forEach { it.sendRoster(sync) }
     }
 
@@ -472,7 +506,10 @@ class Ride(
                 hostMuted = it.has(RosterEntry.HOST_MUTED)
             )
         }
-        if (riders != _state.value.roster) _state.value = _state.value.copy(roster = riders)
+        val s = _state.value
+        if (riders != s.roster || roster.nowPlaying != s.nowPlaying) {
+            _state.value = s.copy(roster = riders, nowPlaying = roster.nowPlaying)
+        }
     }
 
     // --- Stats -----------------------------------------------------------------------------
@@ -535,6 +572,10 @@ class Ride(
 
         override fun onRoster(link: PeerLink, roster: RosterSync, yourId: Int) =
             onScheduler(myEpoch) { this@Ride.onRoster(roster, yourId) }
+
+        override fun onMusicPref(link: PeerLink, level: MusicLevel) = onScheduler(myEpoch) {
+            if (link in links) musicLevels[link] = level
+        }
 
         override fun onRemoved(link: PeerLink) = onScheduler(myEpoch) {
             if (_state.value.role == RideRole.PEER) finishIdle(RideOutcome.RemovedByHost)

@@ -23,6 +23,11 @@ class OpusCodec(
 ) : AudioCodec {
     override val codecId: Byte = CodecId.OPUS
 
+    /** Changes the encoder's bitrate from the next frame on (e.g. more bits while music plays). */
+    fun setBitrate(bps: Int) {
+        encoder.setBitrate(bps)
+    }
+
     private val encoder by lazy {
         OpusEncoder(AudioConfig.SAMPLE_RATE_HZ, 1, OpusApplication.OPUS_APPLICATION_VOIP).apply {
             setBitrate(bitrateBps)
@@ -56,6 +61,9 @@ class OpusCodec(
     companion object {
         /** Spec: 24–32 kbps for voice. 24 kbps is ~10x less airtime than PCM16's 256 kbps. */
         const val DEFAULT_BITRATE_BPS = 24_000
+
+        /** While group music plays (docs/adr/0003): enough for radio-quality music at 16 kHz. */
+        const val MUSIC_BITRATE_BPS = 40_000
 
         /**
          * 0..10. On a realme 5, complexity barely moves Concentus's cost (encode ~2.1 ms at 0/1, ~2.3 ms

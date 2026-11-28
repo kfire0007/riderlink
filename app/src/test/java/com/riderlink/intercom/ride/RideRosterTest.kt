@@ -132,6 +132,50 @@ class RideRosterTest {
         assertEquals(listOf("Kenneth", "Ben"), state.roster.map { it.name })
     }
 
+    // --- Group music ------------------------------------------------------------------------
+
+    @Test
+    fun aRidersMusicLevelReachesTheHostsMixer() {
+        val (ana, ben) = hostWith(1 to "Ana", 2 to "Ben")
+        assertEquals(com.riderlink.intercom.music.MusicLevel.DEFAULT, ride.musicLevelOf(ana))
+
+        android.musicPref(ana, com.riderlink.intercom.music.MusicLevel.OFF); drain()
+
+        assertEquals(com.riderlink.intercom.music.MusicLevel.OFF, ride.musicLevelOf(ana))
+        assertEquals(com.riderlink.intercom.music.MusicLevel.DEFAULT, ride.musicLevelOf(ben))
+    }
+
+    @Test
+    fun nowPlayingShowsForTheHost_andTravelsInTheRoster() {
+        val (ana) = hostWith(1 to "Ana")
+
+        ride.setNowPlaying("Highway Song"); drain()
+
+        assertEquals("Highway Song", state.nowPlaying)
+        assertEquals("Highway Song", ana.rostersSent.last().nowPlaying)
+
+        ride.setNowPlaying(null); drain()
+        assertEquals(null, ana.rostersSent.last().nowPlaying)
+    }
+
+    @Test
+    fun aPeerSendsItsMusicLevelWhenItLinks_andWhenItChanges() {
+        ride.setMusicLevel(com.riderlink.intercom.music.MusicLevel.LOW); drain()
+        joinAndLink()
+        assertEquals(listOf(com.riderlink.intercom.music.MusicLevel.LOW), dialer.link.musicPrefsSent)
+
+        ride.setMusicLevel(com.riderlink.intercom.music.MusicLevel.FULL); drain()
+        assertEquals(com.riderlink.intercom.music.MusicLevel.FULL, dialer.link.musicPrefsSent.last())
+        assertEquals(com.riderlink.intercom.music.MusicLevel.FULL, ride.musicLevel.value)
+    }
+
+    @Test
+    fun aPeerShowsWhatTheHostIsPlaying() {
+        joinAndLink()
+        dialer.roster(RosterSync(1, listOf(RosterEntry(0, "Kenneth", RosterEntry.HOST)), nowPlaying = "Highway Song"), yourId = 1); drain()
+        assertEquals("Highway Song", state.nowPlaying)
+    }
+
     // --- Peer ------------------------------------------------------------------------------
 
     private fun joinAndLink() {

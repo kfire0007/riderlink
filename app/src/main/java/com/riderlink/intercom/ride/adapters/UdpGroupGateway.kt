@@ -3,6 +3,7 @@ package com.riderlink.intercom.ride.adapters
 import com.riderlink.intercom.network.HeartbeatMonitor
 import com.riderlink.intercom.network.LinkState
 import com.riderlink.intercom.network.UdpAudioTransport
+import com.riderlink.intercom.music.MusicLevel
 import com.riderlink.intercom.protocol.CodecId
 import com.riderlink.intercom.protocol.ControlCode
 import com.riderlink.intercom.protocol.JoinAck
@@ -247,6 +248,11 @@ class UdpGroupGateway(
                         ControlCode.PEER_ON_CALL -> events.onControl(member, PeerControl.ON_CALL)
                         ControlCode.PEER_CALL_ENDED -> events.onControl(member, PeerControl.CALL_ENDED)
                         ControlCode.GOODBYE -> depart(member, now)
+                        ControlCode.MUSIC_PREF -> if (payloadLen >= 3) {
+                            val muted = rxBuffer[PacketHeader.HEADER_SIZE + 1].toInt() != 0
+                            val volume = rxBuffer[PacketHeader.HEADER_SIZE + 2].toInt() and 0xFF
+                            events.onMusicPref(member, MusicLevel.fromWire(muted, volume))
+                        }
                     }
                 }
             }

@@ -108,7 +108,7 @@ class GroupAudioMixerTest {
         val shared = HashMap<String, Boolean>()
         repeat(5) {
             mixer.submitHostMic(ShortArray(n) { 500 })
-            mixer.tick(listOf("ana", "ben", "cai"), hostOut) { r, _, isShared -> shared[r] = isShared }
+            mixer.tick(listOf("ana", "ben", "cai"), hostOut) { r, _, key -> shared[r] = key != GroupAudioMixer.OWN_MIX }
         }
 
         assertEquals(mapOf("ana" to false, "ben" to true, "cai" to true), shared)
@@ -145,6 +145,50 @@ class GroupAudioMixerTest {
             mixer.tick(listOf("ana", "ben"), hostOut) { _, _, _ -> }
         }
         assertEquals(false to emptySet<String>(), mixer.recentTalkers())
+    }
+
+    // --- Group music ------------------------------------------------------------------------
+
+    private fun music(value: Int, host: com.riderlink.intercom.music.MusicLevel = com.riderlink.intercom.music.MusicLevel.FULL,
+                      levels: Map<String, com.riderlink.intercom.music.MusicLevel> = emptyMap()) =
+        GroupAudioMixer.MusicInput<String>(ShortArray(n) { value.toShort() }, host) { levels[it] ?: com.riderlink.intercom.music.MusicLevel.FULL }
+
+    @Test
+    fun musicReachesEveryRiderAtTheirLevel_andTheHostToo() {
+        val levels = mapOf("ana" to com.riderlink.intercom.music.MusicLevel.FULL, "ben" to com.riderlink.intercom.music.MusicLevel.LOW,
+            "cai" to com.riderlink.intercom.music.MusicLevel.OFF)
+        val sent = HashMap<String, Pair<Int, Int>>()
+        mixer.tick(listOf("ana", "ben", "cai"), hostOut, music = music(10_000, levels = levels)) { r, pcm, key -> sent[r] = pcm[0].toInt() to key }
+
+        val full = (10_000 * GroupAudioMixer.MUSIC_BASE_GAIN).toInt()
+        assertEquals(full, sent["ana"]!!.first)
+        assertEquals((full * 0.3f).toDouble(), sent["ben"]!!.first.toDouble(), 1.0)
+        assertFalse("music OFF and nobody talking: nothing to send", "cai" in sent)
+        assertEquals(full, hostOut[0].toInt())
+        assertEquals(setOf(com.riderlink.intercom.music.MusicLevel.FULL.ordinal, com.riderlink.intercom.music.MusicLevel.LOW.ordinal),
+            sent.values.map { it.second }.toSet())
+    }
+
+    @Test
+    fun musicDucksWhileSomeoneTalks() {
+        talk("ana", 1000)
+        var benHears = 0
+        repeat(5) { // Ana's 6 frames are still playing; the ducker reached its floor after 3 ticks
+            mixer.tick(listOf("ana", "ben"), hostOut, music = music(10_000)) { r, pcm, _ -> if (r == "ben") benHears = pcm[0].toInt() }
+        }
+        val ducked = (10_000 * GroupAudioMixer.MUSIC_BASE_GAIN * com.riderlink.intercom.music.MusicDucker.DUCKED_GAIN).toInt()
+        assertEquals((1000 + ducked).toDouble(), benHears.toDouble(), 2.0)
+    }
+
+    @Test
+    fun listenersOnTheSameLevelShareAMix_andATalkerStillGetsItsOwn() {
+        talk("ana", 1000)
+        val keys = HashMap<String, Int>()
+        repeat(5) {
+            mixer.tick(listOf("ana", "ben", "cai"), hostOut, music = music(5_000)) { r, _, key -> keys[r] = key }
+        }
+        assertEquals(GroupAudioMixer.OWN_MIX, keys["ana"])
+        assertEquals(keys["ben"], keys["cai"])
     }
 
     @Test

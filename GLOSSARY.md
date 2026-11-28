@@ -68,6 +68,14 @@ _Avoid_: Member list, participants
 The **Host** stops relaying one **Rider**'s voice to the group. That **Rider** still hears everyone.
 _Avoid_: Mute (alone, which is a **Rider** muting their own mic)
 
+**Group music**:
+Songs the **Host** plays from its own phone to the whole group, mixed into every **Rider**'s **Mix-minus** and turned down while anyone talks.
+_Avoid_: Music share, streaming, broadcast
+
+**Music level**:
+How loud one **Rider** hears the **Group music**: Off, Low, Medium or Full. Each **Rider** picks their own.
+_Avoid_: Music volume, music mute
+
 **Legacy Peer**:
 A **Peer** still on the Phase 1 app. It joins a group **Ride** without introducing itself, and is shown simply as "Rider".
 _Avoid_: Old client, v1 peer

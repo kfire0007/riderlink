@@ -101,4 +101,20 @@
     <string name="warn_you_are_host_muted">The rider muted you, so the group cannot hear you.</string>
     <string name="warn_group_crowded">%1$d phones on one Wi-Fi: it may get crowded.</string>
     <string name="toast_removed_by_host">The rider removed you from the group.</string>
+    <!-- Phase 2 M3: group music -->
+    <string name="music_title">♪ Group music</string>
+    <string name="music_empty_host">Add songs from this phone to play them to the whole group.</string>
+    <string name="music_paused">Paused · %1$s</string>
+    <string name="music_track_of">%1$s  (%2$d of %3$d)</string>
+    <string name="music_add">Add music</string>
+    <string name="music_previous">Previous song</string>
+    <string name="music_play">Play</string>
+    <string name="music_pause">Pause</string>
+    <string name="music_next">Next song</string>
+    <string name="music_level_label">Music volume for you (talking always turns it down)</string>
+    <string name="music_level_off">Off</string>
+    <string name="music_level_low">Low</string>
+    <string name="music_level_medium">Medium</string>
+    <string name="music_level_full">Full</string>
+    <string name="music_pick_failed">Could not open the music picker on this phone.</string>
 </resources>

@@ -23,16 +23,19 @@ data class RosterEntry(
 
 /**
  * ROSTER_SYNC payload (after the control code byte):
- * `[rosterVersion:1][count:1]` then per rider `[senderId:1][statusFlags:1][nameLen:1][utf8Name]`.
+ * `[rosterVersion:1][count:1]` then per rider `[senderId:1][statusFlags:1][nameLen:1][utf8Name]`,
+ * then optionally `[titleLen:1][utf8Title]`: the group music now playing (v0.3+; older apps ignore it).
  * The Host sends it to every Peer about once a second and whenever it changes.
  */
 data class RosterSync(
     val version: Int,
-    val entries: List<RosterEntry>
+    val entries: List<RosterEntry>,
+    val nowPlaying: String? = null
 ) {
     fun encode(): ByteArray {
         val names = entries.map { truncateUtf8(it.name, JoinRequest.MAX_NAME_BYTES) }
-        val out = ByteArray(2 + entries.size * 3 + names.sumOf { it.size })
+        val title = nowPlaying?.let { truncateUtf8(it, MAX_TITLE_BYTES) } ?: ByteArray(0)
+        val out = ByteArray(2 + entries.size * 3 + names.sumOf { it.size } + 1 + title.size)
         out[0] = version.toByte()
         out[1] = entries.size.toByte()
         var i = 2
@@ -44,12 +47,15 @@ data class RosterSync(
             System.arraycopy(name, 0, out, i, name.size)
             i += name.size
         }
+        out[i++] = title.size.toByte()
+        System.arraycopy(title, 0, out, i, title.size)
         return out
     }
 
     companion object {
         /** A group is the Host + 9 Android Peers + 1 Safari peer. */
         const val MAX_ENTRIES = 11
+        const val MAX_TITLE_BYTES = 48
 
         fun decode(bytes: ByteArray, offset: Int, length: Int): RosterSync? {
             if (length < 2) return null
@@ -68,7 +74,14 @@ data class RosterSync(
                 entries += RosterEntry(id, String(bytes, i, nameLen, StandardCharsets.UTF_8), flags)
                 i += nameLen
             }
-            return RosterSync(bytes[offset].toInt() and 0xFF, entries)
+            var nowPlaying: String? = null
+            if (i < end) {
+                val titleLen = bytes[i].toInt() and 0xFF
+                if (titleLen in 1..MAX_TITLE_BYTES && i + 1 + titleLen <= end) {
+                    nowPlaying = String(bytes, i + 1, titleLen, StandardCharsets.UTF_8)
+                }
+            }
+            return RosterSync(bytes[offset].toInt() and 0xFF, entries, nowPlaying)
         }
 
         private fun truncateUtf8(text: String, maxBytes: Int): ByteArray {
