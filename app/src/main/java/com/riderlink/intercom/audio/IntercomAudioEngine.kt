@@ -3,11 +3,15 @@ package com.riderlink.intercom.audio
 import android.annotation.SuppressLint
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioDeviceInfo
 import android.media.AudioRecord
+import android.media.AudioRouting
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import com.riderlink.intercom.protocol.CodecId
 import java.util.concurrent.atomic.AtomicBoolean
@@ -93,6 +97,17 @@ class IntercomAudioEngine(
     private var agc: AutomaticGainControl? = null
 
     private var captureThread: Thread? = null
+
+    /** The headset's mic, when one is connected; null lets Android choose (the phone's mic). */
+    @Volatile
+    private var preferredMic: AudioDeviceInfo? = null
+
+    /** Called (on the main thread) with the mic the recorder actually ended up on. */
+    @Volatile
+    var onMicRouted: (AudioDeviceInfo?) -> Unit = {}
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val micRoutingListener = AudioRouting.OnRoutingChangedListener { routing -> onMicRouted(routing.routedDevice) }
     private var playbackThread: Thread? = null
 
     fun start() {
@@ -124,6 +139,26 @@ class IntercomAudioEngine(
                 startAudioThreads()
             }
         }
+    }
+
+    /**
+     * Records from [mic] from now on (main thread). Android doesn't always move a mic that is
+     * already open when a headset connects, so a running mic is reopened, a gap of about 0.1 s.
+     */
+    fun setPreferredMic(mic: AudioDeviceInfo?) {
+        if (preferredMic?.id == mic?.id) return
+        preferredMic = mic
+        if (!running.get() || pausedForCall.get()) return
+        val cap = captureThread ?: return
+        captureThread = null
+        cap.interrupt()
+        unblockRecorder()
+        try {
+            cap.join(500L)
+        } catch (_: InterruptedException) {
+        }
+        releaseRecorder()
+        captureThread = Thread({ runCaptureLoop() }, "RiderLink-Audio-TX").apply { start() }
     }
 
     /** While hosting: whether the Host and which riders spoke in the last ~300 ms. */
@@ -233,7 +268,11 @@ class IntercomAudioEngine(
         }
 
         try {
+            preferredMic?.let { mic -> runCatching { recorder.setPreferredDevice(mic) } }
+            recorder.addOnRoutingChangedListener(micRoutingListener, mainHandler)
             recorder.startRecording()
+            val routed = recorder.routedDevice
+            mainHandler.post { onMicRouted(routed) }
             while (running.get() && !pausedForCall.get() && !Thread.currentThread().isInterrupted) {
                 val read = recorder.read(txCapturePcm, 0, AudioConfig.SAMPLES_PER_FRAME)
                 if (read != AudioConfig.SAMPLES_PER_FRAME) {
@@ -401,6 +440,7 @@ class IntercomAudioEngine(
         } catch (_: Exception) {
         }
         if (rec == null) return
+        runCatching { rec.removeOnRoutingChangedListener(micRoutingListener) }
         try {
             if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 rec.stop()

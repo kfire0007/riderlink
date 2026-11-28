@@ -99,6 +99,10 @@ class RideVoice(
 
     init {
         scope.launch { ride.state.collect { onRideState(it) } }
+        // The mic follows the headset: the engine records from the headset's own mic and reports
+        // back which mic Android really used, for the ride screen.
+        engine.onMicRouted = { headset.onMicRouted(it) }
+        scope.launch { headset.preferredMic.collect { engine.setPreferredMic(it) } }
     }
 
     /** Hot path from the Ride: one incoming voice frame. */

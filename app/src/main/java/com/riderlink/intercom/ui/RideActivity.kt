@@ -224,7 +224,10 @@ class RideActivity : AppCompatActivity() {
             AudioRouteType.PHONE_SPEAKER -> "Speaker"
         }
         binding.txtPillAudio.setTextColor(
-            ContextCompat.getColor(this, if (route.isSpeakerFallback) R.color.signal_amber else R.color.ink_white)
+            ContextCompat.getColor(
+                this,
+                if (route.isSpeakerFallback || route.usingPhoneMicWithHeadset) R.color.signal_amber else R.color.ink_white
+            )
         )
 
         // Mode pill & toggle sync
@@ -249,6 +252,8 @@ class RideActivity : AppCompatActivity() {
             phase is RidePhase.Failed -> "${phase.message} Tap here to try again."
             ride.links.isNotEmpty() && !ride.anyLinked -> getString(R.string.warn_reconnecting)
             route.isSpeakerFallback -> getString(R.string.warn_speaker_fallback)
+            route.headsetHasNoMic -> getString(R.string.warn_headset_has_no_mic)
+            route.usingPhoneMicWithHeadset -> getString(R.string.warn_headset_mic_not_used)
             ride.role == RideRole.HOST && ride.links.count { it.kind == LinkKind.ANDROID } > CROWDED_AFTER_PEERS ->
                 getString(R.string.warn_group_crowded, ride.links.count { it.kind == LinkKind.ANDROID } + 1)
             else -> null

@@ -31,11 +31,12 @@ class LiveDiagnosticsDrawer(
         binding.txtDiagRtt.text = String.format(Locale.US, "%d ms", primary.rttMs)
         binding.txtDiagLoss.text = String.format(Locale.US, "%.1f%%", primary.packetLossPercent)
 
-        binding.txtDiagRoute.text = when (route.routeType) {
+        val output = when (route.routeType) {
             AudioRouteType.BLUETOOTH_HEADSET -> "BT: ${route.deviceName}"
             AudioRouteType.WIRED_HEADSET -> "Wired: ${route.deviceName}"
             AudioRouteType.PHONE_SPEAKER -> "Phone Speaker"
         }
+        binding.txtDiagRoute.text = "$output · ${route.micName}"
 
         val networkLabel = when (ride.networkKind) {
             NetworkKind.HOTSPOT -> "Hotspot"
