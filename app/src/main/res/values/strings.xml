@@ -62,6 +62,8 @@
     <string name="end_ride_button">End ride</string>
 
     <string name="warn_speaker_fallback">No headset detected. Audio is using the phone speaker.</string>
+    <string name="warn_headset_has_no_mic">These earphones have no mic, so your voice comes from the phone mic.</string>
+    <string name="warn_headset_mic_not_used">Your voice is coming from the phone mic, not the headset. Reconnect the headset if it stays this way.</string>
     <string name="warn_peer_on_call">Peer is on a phone call. Voice paused.</string>
     <string name="warn_local_on_call">Paused for your phone call.</string>
     <string name="warn_reconnecting">Link lost. Trying to reconnect automatically.</string>
